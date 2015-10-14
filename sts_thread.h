@@ -14,14 +14,14 @@ private:
   class sts_task_impl : public sts_task
   {
   public:
-    sts_task_impl(const Task &t) :task(t) {}
-    const Task &task;
+    sts_task_impl(Task t) :task(t) {}
+    Task task;
     void run() {task(0);}
   };
 public:
   sts_task *current_sts_task;
   template <typename Task>
-  void set_task(const Task &t)
+  void set_task(Task t)
   {
     current_sts_task = new sts_task_impl<Task>(t);
   }

@@ -10,7 +10,7 @@ public:
   void assign(std::string task_name, int thread_num);
   void assign_for_iter(std::string task_name, int iter_num, int thread_num);
   template <typename Task>
-  void parallel_for(std::string task_name, int start, int end, const Task &task);
+  void parallel_for(std::string task_name, int start, int end, Task task);
 
 private:
   int num_threads;
@@ -18,7 +18,7 @@ private:
 };
 
 template <typename Task>
-void sts::parallel_for(std::string task_name, int start, int end, const Task &task)
+void sts::parallel_for(std::string task_name, int start, int end, Task task)
 {
   int i;
   for (i=start; i<end; i++)

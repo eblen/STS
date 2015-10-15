@@ -17,3 +17,8 @@ sts_thread::sts_thread() :cpp_thread(nullptr), current_sts_task(nullptr), task_s
     }
   }});
 }
+
+void sts_thread::wait(int thread_id)
+{
+  while (current_sts_task != nullptr);
+}

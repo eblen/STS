@@ -13,5 +13,5 @@ int main(int argc, char **argv)
 
   auto hi_func = [&] (int i) {std::cout << "Thread " << sched.get_id() << " doing iteration " << i << std::endl;};
   sched.parallel_for("for_loop_1", hi_func);
-  while(1);
+  sched.wait_for_all();
 }

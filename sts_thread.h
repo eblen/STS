@@ -30,4 +30,5 @@ public:
     task_end_iter = end;
     current_sts_task = new sts_task_impl<Task>(t);
   }
+  void wait(int thread_id);
 };

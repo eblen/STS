@@ -20,3 +20,14 @@ void sts::assign_for_iter(std::string task_name, int iter_start, int iter_end, i
   task_part tp = {iter_start, iter_end, thread_num};
   task_map[task_name].push_back(tp);
 }
+
+void sts::wait(int thread_id)
+{
+  thread_pool[thread_id]->wait(thread_id);
+}
+
+void sts::wait_for_all()
+{
+  int i;
+  for (i=0; i<num_threads; i++) wait(i);
+}

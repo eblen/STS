@@ -18,6 +18,8 @@ public:
   void assign_for_iter(std::string task_name, int iter_start, int iter_end, int thread_num);
   template <typename Task>
   void parallel_for(std::string task_name, Task task);
+  void wait(int thread_id);
+  void wait_for_all();
 
 private:
   int num_threads;

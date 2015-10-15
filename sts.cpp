@@ -14,10 +14,8 @@ std::thread::id sts::get_id() const
 
 void sts::assign(std::string task_name, int thread_num)
 {
-  std::cout << "IDK how to assign" << std::endl;
 }
 
 void sts::assign_for_iter(std::string task_name, int iter_num, int thread_num)
 {
-  std::cout << "IDK how to assign" << std::endl;
 }

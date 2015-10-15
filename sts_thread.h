@@ -19,6 +19,7 @@ private:
     void run() {task(0);}
   };
 public:
+  std::thread *cpp_thread;
   sts_task *current_sts_task;
   template <typename Task>
   void set_task(Task t)

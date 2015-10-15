@@ -1,14 +1,18 @@
 #include <thread>
 #include "sts_thread.h"
 
-sts_thread::sts_thread() :cpp_thread(nullptr), current_sts_task(nullptr)
+sts_thread::sts_thread() :cpp_thread(nullptr), current_sts_task(nullptr), task_start_iter(0), task_end_iter(0)
 {
   cpp_thread = new std::thread([&] () {
   while(1)
   {
     if (current_sts_task != nullptr)
     {
-      current_sts_task->run();
+      int i;
+      for (i=task_start_iter; i<=task_end_iter; i++)
+      {
+        current_sts_task->run(i);
+      }
       current_sts_task = nullptr;
     }
   }});

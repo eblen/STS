@@ -7,7 +7,7 @@ private:
   class sts_task
   {
     public:
-    virtual void run() = 0;
+    virtual void run(int iter) = 0;
   };
 
   template <typename Task>
@@ -16,14 +16,18 @@ private:
   public:
     sts_task_impl(Task t) :task(t) {}
     Task task;
-    void run() {task(0);}
+    void run(int iter) {task(iter);}
   };
 public:
   std::thread *cpp_thread;
+  int task_start_iter;
+  int task_end_iter;
   sts_task *current_sts_task;
   template <typename Task>
-  void set_task(Task t)
+  void set_for_task(Task t, int start, int end)
   {
+    task_start_iter = start;
+    task_end_iter = end;
     current_sts_task = new sts_task_impl<Task>(t);
   }
 };

@@ -1,6 +1,6 @@
 #include "sts_thread.h"
 
-sts_thread::sts_thread()
+sts_thread::sts_thread() :current_sts_task(nullptr)
 {
   while(1)
   {
@@ -11,4 +11,3 @@ sts_thread::sts_thread()
     }
   }
 }
-

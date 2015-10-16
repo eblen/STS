@@ -1,3 +1,5 @@
+#include <atomic>
+
 class sts_thread
 {
 public:
@@ -22,13 +24,13 @@ public:
   std::thread *cpp_thread;
   int task_start_iter;
   int task_end_iter;
-  sts_task *current_sts_task;
+  std::atomic<sts_task *> current_sts_task;
   template <typename Task>
   void set_for_task(Task t, int start, int end)
   {
     task_start_iter = start;
     task_end_iter = end;
-    current_sts_task = new sts_task_impl<Task>(t);
+    current_sts_task.store(new sts_task_impl<Task>(t));
   }
   void wait(int thread_id);
 };

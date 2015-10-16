@@ -6,19 +6,19 @@ sts_thread::sts_thread() :cpp_thread(nullptr), current_sts_task(nullptr), task_s
   cpp_thread = new std::thread([&] () {
   while(1)
   {
-    if (current_sts_task != nullptr)
+    if (current_sts_task.load() != nullptr)
     {
       int i;
       for (i=task_start_iter; i<=task_end_iter; i++)
       {
-        current_sts_task->run(i);
+        current_sts_task.load()->run(i);
       }
-      current_sts_task = nullptr;
+      current_sts_task.store(nullptr);
     }
   }});
 }
 
 void sts_thread::wait(int thread_id)
 {
-  while (current_sts_task != nullptr);
+  while (current_sts_task.load() != nullptr);
 }

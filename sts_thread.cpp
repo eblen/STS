@@ -8,10 +8,14 @@ sts_thread::sts_thread() :cpp_thread(nullptr), current_sts_task(nullptr), task_s
   {
     if (current_sts_task.load() != nullptr)
     {
-      int i;
-      for (i=task_start_iter; i<=task_end_iter; i++)
+      if (!is_for_loop) current_sts_task.load()->run();
+      else
       {
-        current_sts_task.load()->run(i);
+        int i;
+        for (i=task_start_iter; i<=task_end_iter; i++)
+        {
+          current_sts_task.load()->run(i);
+        }
       }
       current_sts_task.store(nullptr);
     }

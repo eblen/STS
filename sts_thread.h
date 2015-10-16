@@ -1,4 +1,5 @@
 #include <atomic>
+#include <cassert>
 
 class sts_thread
 {
@@ -9,7 +10,18 @@ private:
   class sts_task
   {
     public:
+    virtual void run() = 0;
     virtual void run(int iter) = 0;
+  };
+
+  template <typename Task>
+  class sts_for_loop_task_impl : public sts_task
+  {
+  public:
+    sts_for_loop_task_impl(Task t) :task(t) {}
+    Task task;
+    void run() {assert(0);}
+    void run(int iter) {task(iter);}
   };
 
   template <typename Task>
@@ -18,19 +30,31 @@ private:
   public:
     sts_task_impl(Task t) :task(t) {}
     Task task;
-    void run(int iter) {task(iter);}
+    void run() {task();}
+    void run(int iter) {assert(0);}
   };
+
 public:
   std::thread *cpp_thread;
+  bool is_for_loop;
   int task_start_iter;
   int task_end_iter;
   std::atomic<sts_task *> current_sts_task;
+
+  template <typename Task>
+  void set_task(Task t)
+  {
+    is_for_loop = 0;
+    current_sts_task.store(new sts_task_impl<Task>(t));
+  }
+
   template <typename Task>
   void set_for_task(Task t, int start, int end)
   {
+    is_for_loop = 1;
     task_start_iter = start;
     task_end_iter = end;
-    current_sts_task.store(new sts_task_impl<Task>(t));
+    current_sts_task.store(new sts_for_loop_task_impl<Task>(t));
   }
   void wait(int thread_id);
 };

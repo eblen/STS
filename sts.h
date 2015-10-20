@@ -1,4 +1,9 @@
+#ifndef STS_H
+#define STS_H
+
+#include <iostream>
 #include <thread>
+#include <atomic>
 #include <vector>
 #include <cassert>
 #include <map>
@@ -17,11 +22,21 @@ struct sts_task
 {
   std::string name;
   bool is_for_loop;
+  std::atomic<int> *num_parts_running;
   std::vector<task_part> task_parts;
   std::mutex *mutex_task_done;
   std::condition_variable *cv_task_done;
 
-  sts_task(std::string n, bool b) :name(n), is_for_loop(b) {}
+  sts_task(std::string n, bool b) :name(n), is_for_loop(b), num_parts_running(new std::atomic<int>(0)),
+                                   mutex_task_done(new std::mutex), cv_task_done(new std::condition_variable) {}
+/*
+  ~sts_task()
+  {
+    delete num_parts_running;
+    delete mutex_task_done;
+    delete cv_task_done;
+  }
+*/
   void set_thread(int thread_num)
   {
     if (is_for_loop)
@@ -61,35 +76,39 @@ public:
   void parallel(std::string task_name, Task task);
   template <typename Task>
   void parallel_for(std::string task_name, Task task);
-  void wait(int thread_id);
-  void wait_for_all();
+  void wait(std::string task_name);
+  void record_task_part_done(std::string task_name);
 
 private:
   int num_threads;
   std::vector<sts_thread *> thread_pool;
   std::map< std::string, sts_task> task_map;
-  std::vector<task_part> get_task_parts(std::string task_name);
+  sts_task &get_task(std::string task_name);
 };
 
 template <typename Task>
 void sts::parallel(std::string task_name, Task task)
 {
-  auto tplist = get_task_parts(task_name);
-  assert(tplist.size() == 1);
-  task_part tp = tplist[0];
+  sts_task &tn = get_task(task_name);
+  assert(tn.task_parts.size() == 1);
+  tn.num_parts_running->store(1);
+  task_part tp = tn.task_parts[0];
   sts_thread *t = thread_pool[tp.id];
-  t->set_task(task);
+  t->set_task(task_name, task);
 }
 
 template <typename Task>
 void sts::parallel_for(std::string task_name, Task task)
 {
-  auto tplist = get_task_parts(task_name);
+  sts_task &tn = get_task(task_name);
+  tn.num_parts_running->store(tn.task_parts.size());
   int i;
-  for (i=0; i<tplist.size(); i++)
+  for (i=0; i<tn.task_parts.size(); i++)
   {
-    task_part tp = tplist[i];
+    task_part tp = tn.task_parts[i];
     sts_thread *t = thread_pool[tp.id];
-    t->set_for_task(task, tp.start, tp.end);
+    t->set_for_task(task_name, task, tp.start, tp.end);
   }
 }
+
+#endif // STS_H

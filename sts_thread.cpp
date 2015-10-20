@@ -1,7 +1,9 @@
 #include <thread>
 #include "sts_thread.h"
+#include "sts.h"
 
-sts_thread::sts_thread() :cpp_thread(nullptr), current_sts_task(nullptr), task_start_iter(0), task_end_iter(0)
+sts_thread::sts_thread(sts *s) :scheduler(s), cpp_thread(nullptr), current_sts_task(nullptr), task_start_iter(0),
+                                                                                              task_end_iter(0)
 {
   cpp_thread = new std::thread([&] () {
   while(1)
@@ -18,11 +20,7 @@ sts_thread::sts_thread() :cpp_thread(nullptr), current_sts_task(nullptr), task_s
         }
       }
       current_sts_task.store(nullptr);
+      scheduler->record_task_part_done(task_name);
     }
   }});
-}
-
-void sts_thread::wait(int thread_id)
-{
-  while (current_sts_task.load() != nullptr);
 }

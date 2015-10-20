@@ -2,15 +2,53 @@
 #include <vector>
 #include <cassert>
 #include <map>
+#include <mutex>
+#include <condition_variable>
 #include "sts_thread.h"
 
 typedef struct task_part_struct
 {
-  bool is_for_loop;
   int start;
   int end;
   int id;
 } task_part;
+
+struct sts_task
+{
+  std::string name;
+  bool is_for_loop;
+  std::vector<task_part> task_parts;
+  std::mutex *mutex_task_done;
+  std::condition_variable *cv_task_done;
+
+  sts_task(std::string n, bool b) :name(n), is_for_loop(b) {}
+  void set_thread(int thread_num)
+  {
+    if (is_for_loop)
+    {
+      std::cerr << "Error - cannot set thread for looping tasks." << std::endl;
+    }
+    else
+    {
+      task_parts.clear();
+      task_part tp = {0, 0, thread_num};
+      task_parts.push_back(tp);
+    }
+  }
+
+  void add_task_part(int iter_start, int iter_end, int thread_num)
+  {
+    if (!is_for_loop)
+    {
+      std::cerr << "Error - cannot add a task part to a non-loop task." << std::endl;
+    }
+    else
+    {
+      task_part tp = {iter_start, iter_end, thread_num};
+      task_parts.push_back(tp);
+    }
+  } 
+};
 
 class sts
 {
@@ -29,7 +67,7 @@ public:
 private:
   int num_threads;
   std::vector<sts_thread *> thread_pool;
-  std::map< std::string, std::vector<task_part> > task_map;
+  std::map< std::string, sts_task> task_map;
   std::vector<task_part> get_task_parts(std::string task_name);
 };
 
@@ -39,7 +77,6 @@ void sts::parallel(std::string task_name, Task task)
   auto tplist = get_task_parts(task_name);
   assert(tplist.size() == 1);
   task_part tp = tplist[0];
-  assert(!tp.is_for_loop);
   sts_thread *t = thread_pool[tp.id];
   t->set_task(task);
 }
@@ -52,7 +89,6 @@ void sts::parallel_for(std::string task_name, Task task)
   for (i=0; i<tplist.size(); i++)
   {
     task_part tp = tplist[i];
-    assert(tp.is_for_loop);
     sts_thread *t = thread_pool[tp.id];
     t->set_for_task(task, tp.start, tp.end);
   }

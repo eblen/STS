@@ -17,14 +17,17 @@ int main(int argc, char **argv)
 
   auto hi_func = [&] (int i) {std::cout << "Thread " << sched.get_id() << " doing iteration " << i << std::endl;};
   auto hi_func2 = [&] () {std::cout << "Thread " << sched.get_id() << " just saying hi" << std::endl;};
-  sched.parallel_for("for_loop_1", hi_func);
-  sched.wait("for_loop_1");
-  sched.parallel("task0", hi_func2);
-  sched.parallel("task1", hi_func2);
-  sched.wait("task0");
-  sched.wait("task1");
-  sched.parallel("task2", hi_func2);
-  sched.parallel("task3", hi_func2);
-  sched.wait("task2");
-  sched.wait("task3");
+  for (i=0; i<2; i++)
+  {
+    sched.parallel_for("for_loop_1", hi_func);
+    sched.wait("for_loop_1");
+    sched.parallel("task0", hi_func2);
+    sched.parallel("task1", hi_func2);
+    sched.wait("task0");
+    sched.wait("task1");
+    sched.parallel("task2", hi_func2);
+    sched.parallel("task3", hi_func2);
+    sched.wait("task2");
+    sched.wait("task3");
+  }
 }

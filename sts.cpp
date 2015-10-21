@@ -20,7 +20,6 @@ void sts::assign(std::string task_name, int thread_num)
 
 void sts::assign_for_iter(std::string task_name, int iter_start, int iter_end, int thread_num)
 {
-  std::cerr << task_name << " Assigning a loop " << iter_start << " " << iter_end << " " << thread_num << std::endl;
   task_map.emplace(std::map<std::string, sts_task>::value_type(task_name, sts_task(task_name, 1)));
   task_map.find(task_name)->second.add_task_part(iter_start, iter_end, thread_num);
 }

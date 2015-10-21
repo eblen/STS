@@ -39,7 +39,6 @@ private:
     void run(int iter) {assert(0);}
   };
 
-public:
   sts *scheduler;
   std::thread *cpp_thread;
   std::string task_name;
@@ -49,6 +48,7 @@ public:
   std::atomic<sts_task *> next_sts_task;
   sts_task *null_task = nullptr;
 
+public:
   template <typename Task>
   void set_task(std::string tn, Task t)
   {

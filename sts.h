@@ -22,21 +22,14 @@ struct sts_task
 {
   std::string name;
   bool is_for_loop;
-  std::atomic<int> *num_parts_running;
+  std::unique_ptr< std::atomic<int> > num_parts_running;
   std::vector<task_part> task_parts;
-  std::mutex *mutex_task_done;
-  std::condition_variable *cv_task_done;
+  std::unique_ptr<std::mutex> mutex_task_done;
+  std::unique_ptr<std::condition_variable> cv_task_done;
 
   sts_task(std::string n, bool b) :name(n), is_for_loop(b), num_parts_running(new std::atomic<int>(0)),
                                    mutex_task_done(new std::mutex), cv_task_done(new std::condition_variable) {}
-/*
-  ~sts_task()
-  {
-    delete num_parts_running;
-    delete mutex_task_done;
-    delete cv_task_done;
-  }
-*/
+
   void set_thread(int thread_num)
   {
     if (is_for_loop)

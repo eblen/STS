@@ -4,7 +4,7 @@
 sts::sts(int nt) :num_threads(nt)
 {
   int i;
-  for (i=0; i<num_threads; i++) thread_pool.push_back(new sts_thread(this));
+  for (i=0; i<num_threads; i++) thread_pool.push_back(new sts_thread(this, i));
 }
 
 std::thread::id sts::get_id() const

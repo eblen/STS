@@ -46,14 +46,16 @@ public:
   bool is_for_loop;
   int task_start_iter;
   int task_end_iter;
-  std::atomic<sts_task *> current_sts_task;
+  std::atomic<sts_task *> next_sts_task;
+  sts_task *null_task = nullptr;
 
   template <typename Task>
   void set_task(std::string tn, Task t)
   {
     task_name = tn;
     is_for_loop = 0;
-    current_sts_task.store(new sts_task_impl<Task>(t));
+    auto st = new sts_task_impl<Task>(t);
+    while (!next_sts_task.compare_exchange_strong(null_task, st));
   }
 
   template <typename Task>
@@ -63,7 +65,8 @@ public:
     is_for_loop = 1;
     task_start_iter = start;
     task_end_iter = end;
-    current_sts_task.store(new sts_for_loop_task_impl<Task>(t));
+    auto st = new sts_for_loop_task_impl<Task>(t);
+    while (!next_sts_task.compare_exchange_strong(null_task, st));
   }
 };
 

@@ -1,10 +1,10 @@
 #include <iostream>
 #include "sts.h"
 
-sts::sts(int nt) :num_threads(nt)
+sts::sts(int nt, int pin_offset, int pin_stride) :num_threads(nt)
 {
   int i;
-  for (i=0; i<num_threads; i++) thread_pool.push_back(new sts_thread(this, i));
+  for (i=0; i<num_threads; i++) thread_pool.push_back(new sts_thread(this, i*pin_stride + pin_offset));
 }
 
 std::thread::id sts::get_id() const

@@ -61,7 +61,7 @@ struct sts_task
 class sts
 {
 public:
-  sts(int nt);
+  sts(int nt, int pin_offset = 0, int pin_stride = 1);
   std::thread::id get_id() const;
   void assign(std::string task_name, int thread_num);
   void assign_for_iter(std::string task_name, int iter_start, int iter_end, int thread_num);

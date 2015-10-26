@@ -37,14 +37,15 @@ sts_task &sts::get_task(std::string task_name)
 void sts::wait(std::string task_name)
 {
   sts_task &t = get_task(task_name);;
-  std::unique_lock<std::mutex> wait_lock(*(t.mutex_task_done));
-  while (t.num_parts_running->load() > 0) t.cv_task_done->wait(wait_lock);
+  std::unique_lock<std::mutex> pr_lock(*(t.mutex_parts_running_count));
+  while (t.num_parts_running > 0) t.cv_task_done->wait(pr_lock);
 }
 
 void sts::record_task_part_done(std::string task_name)
 {
   sts_task &t = get_task(task_name);
-  int parts_rem = t.num_parts_running->fetch_sub(1);
-  assert(parts_rem > 0);
-  if (parts_rem == 1) t.cv_task_done->notify_all();
+  std::unique_lock<std::mutex> pr_lock(*(t.mutex_parts_running_count));
+  t.num_parts_running--;
+  assert(t.num_parts_running >= 0);
+  if (t.num_parts_running == 0) t.cv_task_done->notify_all();
 }

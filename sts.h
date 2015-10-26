@@ -22,13 +22,13 @@ struct sts_task
 {
   std::string name;
   bool is_for_loop;
-  std::unique_ptr< std::atomic<int> > num_parts_running;
+  int num_parts_running;
   std::vector<task_part> task_parts;
-  std::unique_ptr<std::mutex> mutex_task_done;
+  std::unique_ptr<std::mutex> mutex_parts_running_count;
   std::unique_ptr<std::condition_variable> cv_task_done;
 
-  sts_task(std::string n, bool b) :name(n), is_for_loop(b), num_parts_running(new std::atomic<int>(0)),
-                                   mutex_task_done(new std::mutex), cv_task_done(new std::condition_variable) {}
+  sts_task(std::string n, bool b) :name(n), is_for_loop(b), num_parts_running(0),
+           mutex_parts_running_count(new std::mutex), cv_task_done(new std::condition_variable) {}
 
   void set_thread(int thread_num)
   {
@@ -84,17 +84,17 @@ void sts::parallel(std::string task_name, Task task)
 {
   sts_task &tn = get_task(task_name);
   assert(tn.task_parts.size() == 1);
-  tn.num_parts_running->store(1);
   task_part tp = tn.task_parts[0];
   sts_thread *t = thread_pool[tp.id];
   t->set_task(task_name, task);
+  std::unique_lock<std::mutex> pr_lock(*(tn.mutex_parts_running_count));
+  tn.num_parts_running = 1;
 }
 
 template <typename Task>
 void sts::parallel_for(std::string task_name, Task task)
 {
   sts_task &tn = get_task(task_name);
-  tn.num_parts_running->store(tn.task_parts.size());
   int i;
   for (i=0; i<tn.task_parts.size(); i++)
   {
@@ -102,6 +102,8 @@ void sts::parallel_for(std::string task_name, Task task)
     sts_thread *t = thread_pool[tp.id];
     t->set_for_task(task_name, task, tp.start, tp.end);
   }
+  std::unique_lock<std::mutex> pr_lock(*(tn.mutex_parts_running_count));
+  tn.num_parts_running = tn.task_parts.size();
 }
 
 #endif // STS_H

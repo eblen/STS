@@ -15,7 +15,7 @@ sts_thread::sts_thread(sts *s, int core_num) :scheduler(s), cpp_thread(nullptr),
 {
   cpp_thread = new std::thread([&] () {
   sts_task *current_sts_task = null_task;
-  set_affinity(core_num);
+  if (core_num != -1) set_affinity(core_num);
   while(1)
   {
     if (next_sts_task.load() != null_task)

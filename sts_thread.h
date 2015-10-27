@@ -9,7 +9,7 @@ class sts;
 class sts_thread
 {
 public:
-  sts_thread(sts *s, int core_num);
+  sts_thread(sts *s, int core_num = -1);
 
 private:
   class sts_task

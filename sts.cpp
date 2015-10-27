@@ -4,7 +4,11 @@
 sts::sts(int nt, int pin_offset, int pin_stride) :num_threads(nt)
 {
   int i;
-  for (i=0; i<num_threads; i++) thread_pool.push_back(new sts_thread(this, i*pin_stride + pin_offset));
+  for (i=0; i<num_threads; i++)
+  {
+    if (pin_offset != -1) thread_pool.push_back(new sts_thread(this, i*pin_stride + pin_offset));
+    else thread_pool.push_back(new sts_thread(this));
+  }
 }
 
 std::thread::id sts::get_id() const

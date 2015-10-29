@@ -6,6 +6,8 @@
 
 class sts;
 
+void set_affinity(int core_num);
+
 class sts_thread
 {
 public:

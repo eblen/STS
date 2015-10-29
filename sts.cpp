@@ -1,10 +1,14 @@
 #include <iostream>
 #include "sts.h"
+#include "sts_thread.h"
 
 sts::sts(int nt, int pin_offset, int pin_stride) :num_threads(nt)
 {
+  if (pin_offset != -1) set_affinity(pin_offset);
+  thread_pool.push_back(nullptr);
+
   int i;
-  for (i=0; i<num_threads; i++)
+  for (i=1; i<num_threads; i++)
   {
     if (pin_offset != -1) thread_pool.push_back(new sts_thread(this, i*pin_stride + pin_offset));
     else thread_pool.push_back(new sts_thread(this));

@@ -85,6 +85,10 @@ void sts::parallel(std::string task_name, Task task)
   sts_task &tn = get_task(task_name);
   assert(tn.task_parts.size() == 1);
   task_part tp = tn.task_parts[0];
+  if (tp.id == 0)
+  {
+    std::cerr << "Error - assigning to thread 0 not yet supported\n";
+  }
   sts_thread *t = thread_pool[tp.id];
   t->set_task(task_name, task);
   std::unique_lock<std::mutex> pr_lock(*(tn.mutex_parts_running_count));
@@ -99,6 +103,10 @@ void sts::parallel_for(std::string task_name, Task task)
   for (i=0; i<tn.task_parts.size(); i++)
   {
     task_part tp = tn.task_parts[i];
+    if (tp.id == 0)
+    {
+      std::cerr << "Error - assigning to thread 0 not yet supported\n";
+    }
     sts_thread *t = thread_pool[tp.id];
     t->set_for_task(task_name, task, tp.start, tp.end);
   }

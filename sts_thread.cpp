@@ -13,7 +13,7 @@ void set_affinity(int core_num)
 sts_thread::sts_thread(sts *s, int core_num) :scheduler(s), cpp_thread(nullptr), next_sts_task(null_task),
                                                                                  task_start_iter(0), task_end_iter(0)
 {
-  cpp_thread = new std::thread([&] () {
+  cpp_thread = new std::thread([&, core_num] () {
   sts_task *current_sts_task = null_task;
   if (core_num != -1) set_affinity(core_num);
   while(1)

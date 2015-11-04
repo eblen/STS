@@ -1,7 +1,8 @@
 #ifndef STS_THREAD_H
 #define STS_THREAD_H
 
-#include <atomic>
+#include <mutex>
+#include <condition_variable>
 #include <cassert>
 
 class sts;
@@ -47,8 +48,9 @@ private:
   bool is_for_loop;
   int task_start_iter;
   int task_end_iter;
-  std::atomic<sts_task *> next_sts_task;
-  sts_task *null_task = nullptr;
+  sts_task *next_sts_task;
+  std::mutex mutex_next_sts_task;
+  std::condition_variable cv_next_sts_task_open;
 
 public:
   template <typename Task>
@@ -57,7 +59,9 @@ public:
     task_name = tn;
     is_for_loop = 0;
     auto st = new sts_task_impl<Task>(t);
-    while (!next_sts_task.compare_exchange_strong(null_task, st));
+    std::unique_lock<std::mutex> nst_lock(mutex_next_sts_task);
+    while (next_sts_task != nullptr) cv_next_sts_task_open.wait(nst_lock);
+    next_sts_task = st;
   }
 
   template <typename Task>
@@ -68,7 +72,9 @@ public:
     task_start_iter = start;
     task_end_iter = end;
     auto st = new sts_for_loop_task_impl<Task>(t);
-    while (!next_sts_task.compare_exchange_strong(null_task, st));
+    std::unique_lock<std::mutex> nst_lock(mutex_next_sts_task);
+    while (next_sts_task != nullptr) cv_next_sts_task_open.wait(nst_lock);
+    next_sts_task = st;
   }
 };
 

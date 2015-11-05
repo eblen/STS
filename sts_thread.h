@@ -7,12 +7,16 @@
 
 class sts;
 
+// Main (starting) thread is 0. Others are their assigned id as stored in sts_thread class.
+int get_my_thread_id();
+
 void set_affinity(int core_num);
 
 class sts_thread
 {
 public:
-  sts_thread(sts *s, int core_num = -1);
+  sts_thread(sts *s, int id, int core_num = -1);
+  int get_my_thread_id() {return tid;}
 
 private:
   class sts_task
@@ -42,6 +46,7 @@ private:
     void run(int iter) {assert(0);}
   };
 
+  int tid;
   sts *scheduler;
   std::thread *cpp_thread;
   std::string task_name;

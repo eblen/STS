@@ -10,8 +10,8 @@ sts::sts(int nt, int pin_offset, int pin_stride) :num_threads(nt)
   int i;
   for (i=1; i<num_threads; i++)
   {
-    if (pin_offset != -1) thread_pool.push_back(new sts_thread(this, i*pin_stride + pin_offset));
-    else thread_pool.push_back(new sts_thread(this));
+    if (pin_offset != -1) thread_pool.push_back(new sts_thread(this, i, i*pin_stride + pin_offset));
+    else thread_pool.push_back(new sts_thread(this, i));
   }
 }
 
@@ -20,16 +20,16 @@ std::thread::id sts::get_id() const
   return std::this_thread::get_id();
 }
 
-void sts::assign(std::string task_name, int thread_num)
+void sts::assign(std::string task_name, int worker_thread)
 {
   task_map.emplace(std::map<std::string, sts_task>::value_type(task_name, sts_task(task_name, 0)));
-  task_map.find(task_name)->second.set_thread(thread_num);
+  task_map.find(task_name)->second.add_thread(worker_thread);
 }
 
-void sts::assign_for_iter(std::string task_name, int iter_start, int iter_end, int thread_num)
+void sts::assign_for_iter(std::string task_name, std::vector<int> worker_threads)
 {
   task_map.emplace(std::map<std::string, sts_task>::value_type(task_name, sts_task(task_name, 1)));
-  task_map.find(task_name)->second.add_task_part(iter_start, iter_end, thread_num);
+  task_map.find(task_name)->second.add_threads(worker_threads);
 }
 
 sts_task &sts::get_task(std::string task_name)
@@ -44,9 +44,16 @@ sts_task &sts::get_task(std::string task_name)
 
 void sts::wait(std::string task_name)
 {
-  sts_task &t = get_task(task_name);;
+  sts_task &t = get_task(task_name);
   std::unique_lock<std::mutex> pr_lock(*(t.mutex_parts_running_count));
-  while (t.num_parts_running > 0) t.cv_task_done->wait(pr_lock);
+  while (t.num_parts_running > 0) {t.cv_task_done->wait(pr_lock);}
+}
+
+void sts::record_task_part_start(std::string task_name)
+{
+  sts_task &t = get_task(task_name);
+  std::unique_lock<std::mutex> pr_lock(*(t.mutex_parts_running_count));
+  t.num_parts_running++;
 }
 
 void sts::record_task_part_done(std::string task_name)

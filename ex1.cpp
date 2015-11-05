@@ -1,4 +1,5 @@
 #include <iostream>
+#include <vector>
 #include "sts.h"
 
 int main(int argc, char **argv)
@@ -15,10 +16,12 @@ int main(int argc, char **argv)
 
   sts sched(num_threads);
   int i;
+  std::vector<int> all_threads;
   for (i=0; i<num_threads; i++)
   {
-    sched.assign_for_iter("for_loop_1", i, i, i);
+    all_threads.push_back(i);
   }
+  sched.assign_for_iter("for_loop_1", all_threads);
   sched.assign("add_task", 0);
   sched.assign("sub_task", 1);
   sched.assign("mul_task", 2);
@@ -56,7 +59,7 @@ int main(int argc, char **argv)
 
   for (i=0; i<2; i++)
   {
-    sched.parallel_for("for_loop_1", func);
+    sched.parallel_for("for_loop_1", num_columns, func);
     sched.wait("for_loop_1");
     sched.parallel("add_task", add_func);
     sched.parallel("sub_task", sub_func);

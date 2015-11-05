@@ -11,51 +11,35 @@
 #include <condition_variable>
 #include "sts_thread.h"
 
-typedef struct task_part_struct
-{
-  int start;
-  int end;
-  int id;
-} task_part;
-
 struct sts_task
 {
   std::string name;
   bool is_for_loop;
+  std::vector<int> threads;
   int num_parts_running;
-  std::vector<task_part> task_parts;
   std::unique_ptr<std::mutex> mutex_parts_running_count;
   std::unique_ptr<std::condition_variable> cv_task_done;
 
   sts_task(std::string n, bool b) :name(n), is_for_loop(b), num_parts_running(0),
            mutex_parts_running_count(new std::mutex), cv_task_done(new std::condition_variable) {}
 
-  void set_thread(int thread_num)
+  void add_thread(int worker_thread)
   {
-    if (is_for_loop)
+    threads.push_back(worker_thread);
+    if (!is_for_loop && threads.size() > 1)
     {
-      std::cerr << "Error - cannot set thread for looping tasks." << std::endl;
-    }
-    else
-    {
-      task_parts.clear();
-      task_part tp = {0, 0, thread_num};
-      task_parts.push_back(tp);
+      std::cerr << "Error - adding more than one thread to a non-loop task." << std::endl;
     }
   }
 
-  void add_task_part(int iter_start, int iter_end, int thread_num)
+  void add_threads(std::vector<int> worker_threads)
   {
-    if (!is_for_loop)
+    threads.insert(threads.end(), worker_threads.begin(), worker_threads.end());
+    if (!is_for_loop && threads.size() > 1)
     {
-      std::cerr << "Error - cannot add a task part to a non-loop task." << std::endl;
+      std::cerr << "Error - adding more than one thread to a non-loop task." << std::endl;
     }
-    else
-    {
-      task_part tp = {iter_start, iter_end, thread_num};
-      task_parts.push_back(tp);
-    }
-  } 
+  }
 };
 
 class sts
@@ -64,12 +48,13 @@ public:
   sts(int nt, int pin_offset = -1, int pin_stride = -1);
   std::thread::id get_id() const;
   void assign(std::string task_name, int thread_num);
-  void assign_for_iter(std::string task_name, int iter_start, int iter_end, int thread_num);
+  void assign_for_iter(std::string task_name, std::vector<int> working_threads);
   template <typename Task>
   void parallel(std::string task_name, Task task);
   template <typename Task>
-  void parallel_for(std::string task_name, Task task);
+  void parallel_for(std::string task_name, int num_iters, Task task);
   void wait(std::string task_name);
+  void record_task_part_start(std::string task_name);
   void record_task_part_done(std::string task_name);
 
 private:
@@ -83,35 +68,67 @@ template <typename Task>
 void sts::parallel(std::string task_name, Task task)
 {
   sts_task &tn = get_task(task_name);
-  assert(tn.task_parts.size() == 1);
-  task_part tp = tn.task_parts[0];
-  if (tp.id == 0)
+  assert(tn.threads.size() == 1);
+  int id = tn.threads[0];
+
+  // If current thread is supposed to run this task, then simply run it.
+  if (id == get_my_thread_id())
   {
-    std::cerr << "Error - assigning to thread 0 not yet supported\n";
+    record_task_part_start(task_name);
+    task();
+    record_task_part_done(task_name);
   }
-  sts_thread *t = thread_pool[tp.id];
-  t->set_task(task_name, task);
-  std::unique_lock<std::mutex> pr_lock(*(tn.mutex_parts_running_count));
-  tn.num_parts_running = 1;
+  else
+  {
+    // Cannot assign tasks to starting thread
+    assert(id != 0);
+    sts_thread *t = thread_pool[id];
+    t->set_task(task_name, task);
+  }
 }
 
+// TODO: Check that no thread has more than one part
 template <typename Task>
-void sts::parallel_for(std::string task_name, Task task)
+void sts::parallel_for(std::string task_name, int num_iters, Task task)
 {
+  // Create task parts by dividing iterations among assigned threads
   sts_task &tn = get_task(task_name);
+  assert(tn.threads.size() > 0);
+  int iter_per_thread = num_iters / tn.threads.size();
+  int rem_iters = num_iters % tn.threads.size();
+  int start;
+  int end = -1;
+  int mystart = -1;
+  int myend = -1;
   int i;
-  for (i=0; i<tn.task_parts.size(); i++)
+  for (i=0; i<tn.threads.size(); i++)
   {
-    task_part tp = tn.task_parts[i];
-    if (tp.id == 0)
+    start = end+1;
+    end = start + iter_per_thread - 1;
+    if (i < rem_iters) end++;
+
+    // If I have a part, store it and do it after starting the other threads
+    if (tn.threads[i] == get_my_thread_id())
     {
-      std::cerr << "Error - assigning to thread 0 not yet supported\n";
+      mystart = start;
+      myend = end;
     }
-    sts_thread *t = thread_pool[tp.id];
-    t->set_for_task(task_name, task, tp.start, tp.end);
+    else
+    {
+      // Cannot assign tasks to starting thread
+      assert(tn.threads[i] != 0);
+      sts_thread *t = thread_pool[tn.threads[i]];
+      t->set_for_task(task_name, task, start, end);
+    }
   }
-  std::unique_lock<std::mutex> pr_lock(*(tn.mutex_parts_running_count));
-  tn.num_parts_running = tn.task_parts.size();
+
+  // If I have a part, run it now
+  if (mystart > -1)
+  {
+    record_task_part_start(task_name);
+    for (i=mystart; i<=myend; i++) task(i);
+    record_task_part_done(task_name);
+  }
 }
 
 #endif // STS_H

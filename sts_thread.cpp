@@ -29,7 +29,7 @@ sts_thread::sts_thread(sts *s, int id, int core_num) :scheduler(s), tid(id), cpp
         next_sts_task = nullptr;
         cv_next_sts_task_open.notify_one();
       }
-      scheduler->record_task_part_start(task_name);
+
       if (!is_for_loop) current_sts_task->run();
       else
       {

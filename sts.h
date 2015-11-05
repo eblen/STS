@@ -54,7 +54,6 @@ public:
   template <typename Task>
   void parallel_for(std::string task_name, int num_iters, Task task);
   void wait(std::string task_name);
-  void record_task_part_start(std::string task_name);
   void record_task_part_done(std::string task_name);
 
 private:
@@ -62,6 +61,7 @@ private:
   std::vector<sts_thread *> thread_pool;
   std::map< std::string, sts_task> task_map;
   sts_task &get_task(std::string task_name);
+  void start_task(std::string task_name, int num_parts);
 };
 
 template <typename Task>
@@ -71,10 +71,10 @@ void sts::parallel(std::string task_name, Task task)
   assert(tn.threads.size() == 1);
   int id = tn.threads[0];
 
+  start_task(task_name, 1);
   // If current thread is supposed to run this task, then simply run it.
   if (id == get_my_thread_id())
   {
-    record_task_part_start(task_name);
     task();
     record_task_part_done(task_name);
   }
@@ -101,6 +101,8 @@ void sts::parallel_for(std::string task_name, int num_iters, Task task)
   int mystart = -1;
   int myend = -1;
   int i;
+
+  start_task(task_name, tn.threads.size());
   for (i=0; i<tn.threads.size(); i++)
   {
     start = end+1;
@@ -125,7 +127,6 @@ void sts::parallel_for(std::string task_name, int num_iters, Task task)
   // If I have a part, run it now
   if (mystart > -1)
   {
-    record_task_part_start(task_name);
     for (i=mystart; i<=myend; i++) task(i);
     record_task_part_done(task_name);
   }

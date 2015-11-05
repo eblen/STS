@@ -42,18 +42,18 @@ sts_task &sts::get_task(std::string task_name)
   return (*stlist_iter).second;
 }
 
+void sts::start_task(std::string task_name, int num_parts)
+{
+  sts_task &t = get_task(task_name);
+  std::unique_lock<std::mutex> pr_lock(*(t.mutex_parts_running_count));
+  t.num_parts_running = num_parts;
+}
+
 void sts::wait(std::string task_name)
 {
   sts_task &t = get_task(task_name);
   std::unique_lock<std::mutex> pr_lock(*(t.mutex_parts_running_count));
   while (t.num_parts_running > 0) {t.cv_task_done->wait(pr_lock);}
-}
-
-void sts::record_task_part_start(std::string task_name)
-{
-  sts_task &t = get_task(task_name);
-  std::unique_lock<std::mutex> pr_lock(*(t.mutex_parts_running_count));
-  t.num_parts_running++;
 }
 
 void sts::record_task_part_done(std::string task_name)

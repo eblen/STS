@@ -1,18 +1,15 @@
+#include <atomic>
+#include <cassert>
 #include <deque>
 #include <thread>
+#include <map>
 #include <memory>
+#include <mutex>
 #include <vector>
 #include "range.h"
 
-enum { TASK_F, TASK_G, TASK_F_0, TASK_G_0, TASK_G_1 };
-
 //sts code. This should of course not be here but in the sts.h. This is just to show the interface and make it compile (but of course not link).
 
-template< class T, class... Args >
-std::unique_ptr<T> make_unique( Args&&... args )
-{
-    return std::unique_ptr<T>(new T(std::forward<Args>(args)...));
-}
 
 struct SubTask {
     SubTask(int taskId, Range<Ratio> range) : taskId_(taskId), range_(range) {}
@@ -31,6 +28,7 @@ public:
     void addSubtask(int taskId, Range<Ratio> range) {
         taskQueue_.emplace_back(SubTask(taskId, range));
     }
+    void join() { thread_->join(); }
 
 private:
     std::deque<SubTask> taskQueue_;
@@ -39,7 +37,7 @@ private:
 
 class ITask {
 public:
-    virtual void run(Range<Ratio>);
+    virtual void run(Range<Ratio>) = 0;
     virtual ~ITask() {};
 };
 
@@ -70,52 +68,112 @@ private:
 };
 
 
+class TaskPtr {
+public:
+    TaskPtr() { ptr_.store(nullptr, std::memory_order_release); }
+    ~TaskPtr() { if (ptr_) delete ptr_; } // descructor isn't allowed to be called in parallel
+    TaskPtr(const TaskPtr&) = delete;
+    TaskPtr& operator=(const TaskPtr&) = delete;
+
+    void store(ITask* t) { 
+        ITask* o = ptr_;
+        ptr_.store(t, std::memory_order_release);
+        if(o) delete o; //OK because not 2 stores are allowd
+    }
+    ITask* load() { return ptr_.load(std::memory_order_consume); }
+private:
+    std::atomic<ITask*> ptr_;
+};
+
+//typedef std::atomic<std::unique_ptr<ITask>> TaskPtr;
+
 class STS {
 public:
     STS(int n) {
         instance_ = this;  //should verify that not 2 are created
+        scheduleCounter.store(0, std::memory_order_release);
         threads_.emplace_back(true);
         threads_.resize(n);
     }
-    void assign(int taskId, int threadId, Range<Ratio> range = Range<Ratio>(1)) {
-        threads_.at(threadId).addSubtask(taskId, range);
+    void assign(std::string label, int threadId, Range<Ratio> range = Range<Ratio>(1)) {
+        threads_.at(threadId).addSubtask(getTaskId(label), range);
     }
     template<typename F>
-    void run(int taskId, F function) {
-        reserve_tasks(taskId+1);
-        tasks_[taskId] = make_unique<BasicTask<F>>(function);
+    void run(std::string label, F function) {
+        tasks_[getTaskId(label)].store(new BasicTask<F>(function));
     }
     template<typename F>
-    void parallel_for(int start, int end, F f) {
-        //TODO
+    void parallel_for(std::string label, int start, int end, F f) {
+        tasks_[getTaskId(label)].store(new LoopTask<F>(f, {start, end}));
     }
 
     void reschedule();
-    void wait(); //TODO
+    void wait() {
+        threads_[0].doWork();
+        for (unsigned int i=1; i<threads_.size(); i++) {
+            threads_[i].join(); //TODO: just wait not end
+        }
+    }
 
     static STS *getInstance() { return instance_; } //should this auto-create it if isn't created by the user?
-    ITask *getTask(int taskId) { return tasks_[taskId].get(); }
+    ITask *getTask(int taskId) { 
+        ITask *t;
+        while(!(t=tasks_[taskId].load()));
+        return t;
+        /*
+        volatile auto p = &(tasks_[taskId]);
+        while (!(*p)); //wait on task to be available
+        __sync_synchronize(); //
+        return p->get(); */
+    }
 private:
-    void reserve_tasks(unsigned int n) {
-        if (tasks_.size() > n)
-            tasks_.resize(n);
+    int getTaskId(std::string label) {
+        static std::mutex mutex;
+        //std::lock_guard<std::mutex> lock(mutex); //TODO: needed if in not pre-scheduled mode
+        auto it = taskLabels_.find(label);
+        if (it != taskLabels_.end()) {
+            return it->second;
+        } else {
+            unsigned int v = taskLabels_.size();
+            assert(v==tasks_.size());
+            tasks_.resize(v+1);
+            taskLabels_[label] = v;
+            return v;
+        }
     }       
 
-    std::deque<std::unique_ptr<ITask>>  tasks_;  //Is this ok to be a vector (linear) or does it need to be a tree. A serial tasks isn't before a loop. It is both before and after. 
+    std::deque<TaskPtr>  tasks_;  //It is essiential this isn't a vector (doesn't get moved when resizing). Because Is this ok to be a vector (linear) or does it need to be a tree. A serial tasks isn't before a loop. It is both before and after. 
+    std::map<std::string,int> taskLabels_;
     std::vector<Thread> threads_;
     static STS *instance_;
+public:
+    std::atomic<int> scheduleCounter;
 };
 
+STS *STS::instance_ = nullptr;
+
+//for automatic labels: (strings can be avoided by using program counter instead) 
+#define STRINGIFY(x) #x
+#define TOSTRING(x) STRINGIFY(x)
+#define AT __FILE__ ":" TOSTRING(__LINE__)
+
 template<typename F>
-void parallel_for(int start, int end, F f) {
-    STS::getInstance()->parallel_for(start, end, f);
+void parallel_for(std::string l, int start, int end, F f) {
+    STS::getInstance()->parallel_for(l, start, end, f);
+}
+
+template<typename F>
+void run(std::string l, F f) {
+    STS::getInstance()->run(l, f);
 }
 
 void Thread::doWork() { //work function (gets either executed by std::thread  or wait(all))
     //How does it end? Do subtask get reused? How does it restart the queue?
     //Simplest so far: assumes all are assigned before. No restarting
+    STS *sts = STS::getInstance();
+    while (!sts->scheduleCounter.load(std::memory_order_acquire));
     for (auto subtask: taskQueue_) {
-        ITask *task = STS::getInstance()->getTask(subtask.taskId_);
+        ITask *task = sts->getTask(subtask.taskId_);
         task->run(subtask.range_);
         //execute lambda
     }
@@ -125,35 +183,38 @@ void Thread::doWork() { //work function (gets either executed by std::thread  or
 void STS::reschedule()
 {
     // F will be on 1 and G on 2 anyhow because they are assigned round-robin but one could do it manual:
-    assign(TASK_F, 1);
-    assign(TASK_G, 2); 
+    assign("TASK_F", 1);
+    assign("TASK_G", 2); 
 
-    assign(TASK_F_0, 1,
-           Range<Ratio>(0, {2,3})); //range. Could be either the fraction of the total. But the disadvantage is that it is floating point then. Or it could be the actual iterations, but then it doesn't work well if the next step has a different number of total steps
+    assign("TASK_F_0", 1, {0, {2,3}}); 
     
-    assign(TASK_G_0, 2, {0, {1,2}});
-    assign(TASK_G_1, 2, {0, {1,2}});
+    assign("TASK_G_0", 2, {0, {1,2}});
+    assign("TASK_G_1", 2, {0, {1,2}});
     
-    assign(TASK_G_0, 0, {{1,2}, 1});
-    assign(TASK_F_0, 0, {{2,3}, 1});
-    assign(TASK_G_1, 0, {{1,2}, 1});
+    assign("TASK_G_0", 0, {{1,2}, 1});
+    assign("TASK_F_0", 0, {{2,3}, 1});
+    assign("TASK_G_1", 0, {{1,2}, 1});
+
+    scheduleCounter.store(1, std::memory_order_release); //TODO count up
 }
 //end sts code
 
-void do_something(int);
+void do_something(const char* s, int i) {
+    fprintf(stderr, "%s: %d\n", s, i);
+}
 
-const int niter = 60000;
+const int niter = 6;
 
 void f() {
-    parallel_for(0, niter, [](size_t i) {do_something(i);});
+    parallel_for("TASK_F_0", 0, niter, [](size_t i) {do_something("F", i);});
 }
 
 void g() {
-    parallel_for(0, niter/3, [](size_t i) {do_something(i);});
+    parallel_for("TASK_G_0", 0, niter/3, [](size_t i) {do_something("G0", i);});
 
-    for(int i=0; i<niter/3; i++) { do_something(i); }
+    for(int i=0; i<niter/3; i++) { do_something("G1", i); }
 
-    parallel_for(0, niter/3, [](size_t i) {do_something(i);});
+    parallel_for("TASK_G_1", 0, niter/3, [](size_t i) {do_something("G2", i);});
 }
 
 
@@ -164,11 +225,12 @@ int main(int argc, char **argv)
 
   STS sched(nthreads);
 
-  for (int step=0; step<nsteps; step++)
+  //  for (int step=0; step<nsteps; step++) //TODO
   {
-      sched.run(TASK_F, []{f();});
-      sched.run(TASK_G, []{g();});
-      sched.wait();
       sched.reschedule();
+      //TODO: wait until scheduled
+      sched.run("TASK_F", []{f();});
+      sched.run("TASK_G", []{g();});
+      sched.wait();
   }
 }

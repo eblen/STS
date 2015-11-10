@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <atomic>
 #include <cassert>
 #include <deque>
@@ -19,21 +20,25 @@ struct SubTask {
 
 class Thread {
 public:   
-    Thread(bool isMaster = false) {
-        if (!isMaster) {
-            thread_.reset(new std::thread([&](){doWork();}));
+    Thread(int id) {
+        if (id!=0) {
+            thread_.reset(new std::thread([=](){doWork(id);}));
         }
     }
-    void doWork(); //work function (gets either executed by std::thread  or wait(all))
+    void doWork(int id); //work function (gets either executed by std::thread  or wait(all))
     void addSubtask(int taskId, Range<Ratio> range) {
         taskQueue_.emplace_back(SubTask(taskId, range));
     }
     void join() { thread_->join(); }
+    static int getId() { return id_; }
 
 private:
     std::deque<SubTask> taskQueue_;
     std::unique_ptr<std::thread> thread_;
+    static thread_local int id_;
 };
+
+int thread_local Thread::id_ = 0;
 
 class ITask {
 public:
@@ -92,8 +97,10 @@ public:
     STS(int n) {
         instance_ = this;  //should verify that not 2 are created
         scheduleCounter.store(0, std::memory_order_release);
-        threads_.emplace_back(true);
-        threads_.resize(n);
+        std::vector<int> ids(n);
+        std::iota(ids.begin(),ids.end(),0);
+        threads_.reserve(n);
+        threads_.insert(threads_.end(), ids.begin(), ids.end());
     }
     void assign(std::string label, int threadId, Range<Ratio> range = Range<Ratio>(1)) {
         threads_.at(threadId).addSubtask(getTaskId(label), range);
@@ -109,7 +116,7 @@ public:
 
     void reschedule();
     void wait() {
-        threads_[0].doWork();
+        threads_[0].doWork(0);
         for (unsigned int i=1; i<threads_.size(); i++) {
             threads_[i].join(); //TODO: just wait not end
         }
@@ -120,11 +127,6 @@ public:
         ITask *t;
         while(!(t=tasks_[taskId].load()));
         return t;
-        /*
-        volatile auto p = &(tasks_[taskId]);
-        while (!(*p)); //wait on task to be available
-        __sync_synchronize(); //
-        return p->get(); */
     }
 private:
     int getTaskId(std::string label) {
@@ -167,9 +169,10 @@ void run(std::string l, F f) {
     STS::getInstance()->run(l, f);
 }
 
-void Thread::doWork() { //work function (gets either executed by std::thread  or wait(all))
+void Thread::doWork(int id) { //work function (gets either executed by std::thread  or wait(all))
     //How does it end? Do subtask get reused? How does it restart the queue?
     //Simplest so far: assumes all are assigned before. No restarting
+    Thread::id_ = id;
     STS *sts = STS::getInstance();
     while (!sts->scheduleCounter.load(std::memory_order_acquire));
     for (auto subtask: taskQueue_) {
@@ -200,16 +203,20 @@ void STS::reschedule()
 //end sts code
 
 void do_something(const char* s, int i) {
-    fprintf(stderr, "%s: %d\n", s, i);
+    fprintf(stderr, "%s: %d %d\n", s, i, Thread::getId());
 }
 
 const int niter = 6;
 
 void f() {
-    parallel_for("TASK_F_0", 0, niter, [](size_t i) {do_something("F", i);});
+    fprintf(stderr, "F: %d\n", Thread::getId());
+
+    parallel_for("TASK_F_0", 0, niter, [](size_t i) {do_something("F0", i);});
 }
 
 void g() {
+    fprintf(stderr, "G: %d\n", Thread::getId());
+
     parallel_for("TASK_G_0", 0, niter/3, [](size_t i) {do_something("G0", i);});
 
     for(int i=0; i<niter/3; i++) { do_something("G1", i); }

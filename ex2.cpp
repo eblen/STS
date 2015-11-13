@@ -11,7 +11,7 @@
 
 //sts code. This should of course not be here but in the sts.h. This is just to show the interface and make it compile (but of course not link).
 
-
+//Describes part of Task done by one thread
 struct SubTask {
     SubTask(int taskId, Range<Ratio> range) : taskId_(taskId), range_(range) {
         done_.store(false, std::memory_order_release);
@@ -19,30 +19,43 @@ struct SubTask {
     int taskId_;
     Range<Ratio> range_;
     std::atomic_bool done_;
+    void wait() const {
+        while(!(done_.load(std::memory_order_acquire)));
+    }
 };
 
+//Each thread one object of this type
+//Wrapps std::thread and contains the task-queue
 class Thread {
 public:   
     Thread(int id) {
         if (id!=0) {
-            thread_.reset(new std::thread([=](){doWork(id);}));
+            thread_.reset(new std::thread([=](){id_=id; doWork();}));
         }
     }
     void processQueue(); //work function (gets either executed by std::thread  or wait(all))
-    void addSubtask(int taskId, Range<Ratio> range) {
+    void processTask();
+    SubTask const* addSubtask(int taskId, Range<Ratio> range) {
         taskQueue_.emplace_back(taskId, range);
+        return &(taskQueue_.back());
     }
     void clearSubtasks() {
         taskQueue_.clear();
     }
-    const SubTask& getSubtask(int i) { return taskQueue_[i]; }
-    int countSubtask() { return taskQueue_.size(); }
+    SubTask const* getNextSubtask() {
+        return &(taskQueue_[nextSubtaskId_]);
+    }
+
     void join() { thread_->join(); }
     static int getId() { return id_; }
-
+    void wait() {
+        taskQueue_[taskQueue_.size()-1].wait();
+    }
 private:
-    void doWork(int);
+    void doWork();
+
     std::deque<SubTask> taskQueue_;
+    unsigned int nextSubtaskId_ = 0;
     std::unique_ptr<std::thread> thread_;
     static thread_local int id_;
 };
@@ -81,14 +94,11 @@ private:
     F func_;
 };
 
-
+//Scoped Ptr without atomic load/store
 class TaskPtr {
 public:
     TaskPtr() { ptr_.store(nullptr, std::memory_order_release); }
     ~TaskPtr() { if (ptr_) delete ptr_; } // descructor isn't allowed to be called in parallel
-    TaskPtr(const TaskPtr&) = delete;
-    TaskPtr& operator=(const TaskPtr&) = delete;
-
     void store(ITask* t) { 
         ITask* o = ptr_;
         ptr_.store(t, std::memory_order_release);
@@ -99,7 +109,10 @@ private:
     std::atomic<ITask*> ptr_;
 };
 
-//typedef std::atomic<std::unique_ptr<ITask>> TaskPtr;
+struct Task {
+    TaskPtr task_;
+    std::vector<SubTask const*> subtasks_;
+};
 
 class STS {
 public:
@@ -119,41 +132,51 @@ public:
     }
 
     void assign(std::string label, int threadId, Range<Ratio> range = Range<Ratio>(1)) {
-        threads_.at(threadId).addSubtask(getTaskId(label), range);
+        int id = getTaskId(label);
+        SubTask const* subtask = threads_.at(threadId).addSubtask(id, range);
+        tasks_[id].subtasks_.push_back(subtask);
     }
     void clearAssignments() {
         for (auto &thread : threads_) {
             thread.clearSubtasks();
         }
+        for (auto &task : tasks_) {
+            task.subtasks_.clear();
+        }
     }
     void nextStep() {
         for (auto &task: tasks_) {
-            task.store(nullptr);
+            task.task_.store(nullptr);
         }
         stepCounter.store(stepCounter+1, std::memory_order_release); //TODO: test doing just this without clear+reassign. Only subtask.done_ needs to be reset to false
     }
     template<typename F>
     void run(std::string label, F function) {
-        tasks_[getTaskId(label)].store(new BasicTask<F>(function));
+        tasks_[getTaskId(label)].task_.store(new BasicTask<F>(function));
     }
     template<typename F>
     void parallel_for(std::string label, int start, int end, F f) {
-        tasks_[getTaskId(label)].store(new LoopTask<F>(f, {start, end}));
+        int taskId = getTaskId(label);
+        auto &task = tasks_[taskId];
+        task.task_.store(new LoopTask<F>(f, {start, end}));
+        auto &thread = threads_[Thread::getId()];
+        assert(thread.getNextSubtask()->taskId_==taskId);
+        thread.processTask(); //this implies that a task always participates in a lopp and is always next in queue
+        for(auto s: task.subtasks_) {
+            s->wait();
+        }
     }
-
     void reschedule();
     void wait() {
         threads_[0].processQueue();
         for(unsigned int i=1;i<threads_.size();i++) {
-            auto &thread=threads_[i];
-            while(!(thread.getSubtask(thread.countSubtask()-1).done_.load(std::memory_order_acquire)));
+            threads_[i].wait();
         }
     }
-
     static STS *getInstance() { return instance_; } //should this auto-create it if isn't created by the user?
     ITask *getTask(int taskId) { 
         ITask *t;
-        while(!(t=tasks_[taskId].load()));
+        while(!(t=tasks_[taskId].task_.load()));
         return t;
     }
 private:
@@ -172,7 +195,7 @@ private:
         }
     }       
 
-    std::deque<TaskPtr>  tasks_;  //It is essiential this isn't a vector (doesn't get moved when resizing). Because Is this ok to be a vector (linear) or does it need to be a tree. A serial tasks isn't before a loop. It is both before and after. 
+    std::deque<Task>  tasks_;  //It is essiential this isn't a vector (doesn't get moved when resizing). Because Is this ok to be a vector (linear) or does it need to be a tree. A serial tasks isn't before a loop. It is both before and after. 
     std::map<std::string,int> taskLabels_;
     std::vector<Thread> threads_;
     static STS *instance_;
@@ -197,8 +220,7 @@ void run(std::string l, F f) {
     STS::getInstance()->run(l, f);
 }
 
-void Thread::doWork(int id) {
-    Thread::id_ = id;
+void Thread::doWork() {
     STS *sts = STS::getInstance();
     for (int i=0; ; i++) {
         int c;
@@ -208,22 +230,23 @@ void Thread::doWork(int id) {
     }
 }
 
-void Thread::processQueue() { //work function (gets either executed by std::thread  or wait(all))
-    //How does it end? Do subtask get reused? How does it restart the queue?
-    //Simplest so far: assumes all are assigned before. No restarting
-    STS *sts = STS::getInstance();
-    for (auto& subtask: taskQueue_) {
-        ITask *task = sts->getTask(subtask.taskId_);
-        task->run(subtask.range_);
-        subtask.done_.store(true, std::memory_order_release); //add store
+void Thread::processQueue() { 
+    while(nextSubtaskId_<taskQueue_.size()) {
+        processTask();
     }
+    nextSubtaskId_=0;
+}
+
+void Thread::processTask() {
+    auto& subtask = taskQueue_[nextSubtaskId_++];
+    ITask *task = STS::getInstance()->getTask(subtask.taskId_);
+    task->run(subtask.range_);
+    subtask.done_.store(true, std::memory_order_release); //add store
 }
 
 //of course this shouldn't explicit depend on the user tasks. In reallity the user tasks would be discovered.
 void STS::reschedule()
 {
-    // F will be on 1 and G on 2 anyhow because they are assigned round-robin but one could do it manua:
-
     clearAssignments();
 
     assign("TASK_F", 1);
@@ -240,7 +263,7 @@ void STS::reschedule()
 
     nextStep();
 }
-//end sts code
+//end sts code. start example
 
 void do_something(const char* s, int i, int step) {
     fprintf(stderr, "%s: i=%d step=%d tid=%d\n", s, i, step, Thread::getId());
@@ -274,7 +297,7 @@ int main(int argc, char **argv)
 
   for (int step=0; step<nsteps; step++)
   {
-      if (step==0) 
+      if (true) //step==0) 
           sched.reschedule(); //can be done every step if desired
       else
           sched.nextStep();

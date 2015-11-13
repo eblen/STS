@@ -13,9 +13,12 @@
 
 
 struct SubTask {
-    SubTask(int taskId, Range<Ratio> range) : taskId_(taskId), range_(range) {}
+    SubTask(int taskId, Range<Ratio> range) : taskId_(taskId), range_(range) {
+        done_.store(false, std::memory_order_release);
+    }
     int taskId_;
     Range<Ratio> range_;
+    std::atomic_bool done_;
 };
 
 class Thread {
@@ -25,14 +28,20 @@ public:
             thread_.reset(new std::thread([=](){doWork(id);}));
         }
     }
-    void doWork(int id); //work function (gets either executed by std::thread  or wait(all))
+    void processQueue(); //work function (gets either executed by std::thread  or wait(all))
     void addSubtask(int taskId, Range<Ratio> range) {
-        taskQueue_.emplace_back(SubTask(taskId, range));
+        taskQueue_.emplace_back(taskId, range);
     }
+    void clearSubtasks() {
+        taskQueue_.clear();
+    }
+    const SubTask& getSubtask(int i) { return taskQueue_[i]; }
+    int countSubtask() { return taskQueue_.size(); }
     void join() { thread_->join(); }
     static int getId() { return id_; }
 
 private:
+    void doWork(int);
     std::deque<SubTask> taskQueue_;
     std::unique_ptr<std::thread> thread_;
     static thread_local int id_;
@@ -105,6 +114,17 @@ public:
     void assign(std::string label, int threadId, Range<Ratio> range = Range<Ratio>(1)) {
         threads_.at(threadId).addSubtask(getTaskId(label), range);
     }
+    void clearAssignments() {
+        for (auto &thread : threads_) {
+            thread.clearSubtasks();
+        }
+    }
+    void nextStep() {
+        for (auto &task: tasks_) {
+            task.store(nullptr);
+        }
+        scheduleCounter.store(scheduleCounter+1, std::memory_order_release); //TODO: test doing just this without clear+reassign. Only subtask.done_ needs to be reset to false
+    }
     template<typename F>
     void run(std::string label, F function) {
         tasks_[getTaskId(label)].store(new BasicTask<F>(function));
@@ -116,9 +136,16 @@ public:
 
     void reschedule();
     void wait() {
-        threads_[0].doWork(0);
-        for (unsigned int i=1; i<threads_.size(); i++) {
-            threads_[i].join(); //TODO: just wait not end
+        threads_[0].processQueue();
+        for(unsigned int i=1;i<threads_.size();i++) {
+            auto &thread=threads_[i];
+            while(!(thread.getSubtask(thread.countSubtask()-1).done_.load(std::memory_order_acquire)));
+        }
+    }
+    void finish() {
+        scheduleCounter.store(-1, std::memory_order_release);
+        for(unsigned int i=1;i<threads_.size();i++) {
+            threads_[i].join();
         }
     }
 
@@ -169,23 +196,35 @@ void run(std::string l, F f) {
     STS::getInstance()->run(l, f);
 }
 
-void Thread::doWork(int id) { //work function (gets either executed by std::thread  or wait(all))
-    //How does it end? Do subtask get reused? How does it restart the queue?
-    //Simplest so far: assumes all are assigned before. No restarting
+void Thread::doWork(int id) {
     Thread::id_ = id;
     STS *sts = STS::getInstance();
-    while (!sts->scheduleCounter.load(std::memory_order_acquire));
-    for (auto subtask: taskQueue_) {
+    for (int i=0; ; i++) {
+        int c;
+        while ((c=sts->scheduleCounter.load(std::memory_order_acquire))==i);
+        if (c<0) break;
+        processQueue();
+    }
+}
+
+void Thread::processQueue() { //work function (gets either executed by std::thread  or wait(all))
+    //How does it end? Do subtask get reused? How does it restart the queue?
+    //Simplest so far: assumes all are assigned before. No restarting
+    STS *sts = STS::getInstance();
+    for (auto& subtask: taskQueue_) {
         ITask *task = sts->getTask(subtask.taskId_);
         task->run(subtask.range_);
-        //execute lambda
+        subtask.done_.store(true, std::memory_order_release); //add store
     }
 }
 
 //of course this shouldn't explicit depend on the user tasks. In reallity the user tasks would be discovered.
 void STS::reschedule()
 {
-    // F will be on 1 and G on 2 anyhow because they are assigned round-robin but one could do it manual:
+    // F will be on 1 and G on 2 anyhow because they are assigned round-robin but one could do it manua:
+
+    clearAssignments();
+
     assign("TASK_F", 1);
     assign("TASK_G", 2); 
 
@@ -198,46 +237,46 @@ void STS::reschedule()
     assign("TASK_F_0", 0, {{2,3}, 1});
     assign("TASK_G_1", 0, {{1,2}, 1});
 
-    scheduleCounter.store(1, std::memory_order_release); //TODO count up
+    nextStep();
 }
 //end sts code
 
-void do_something(const char* s, int i) {
-    fprintf(stderr, "%s: %d %d\n", s, i, Thread::getId());
+void do_something(const char* s, int i, int step) {
+    fprintf(stderr, "%s: i=%d step=%d tid=%d\n", s, i, step, Thread::getId());
 }
 
 const int niter = 6;
 
-void f() {
-    fprintf(stderr, "F: %d\n", Thread::getId());
+void f(int step) {
+    fprintf(stderr, "F: step=%d tid=%d\n", step, Thread::getId());
 
-    parallel_for("TASK_F_0", 0, niter, [](size_t i) {do_something("F0", i);});
+    parallel_for("TASK_F_0", 0, niter, [=](size_t i) {do_something("F0", i, step);});
 }
 
-void g() {
-    fprintf(stderr, "G: %d\n", Thread::getId());
+void g(int step) {
+    fprintf(stderr, "G: step=%d tid=%d\n", step, Thread::getId());
 
-    parallel_for("TASK_G_0", 0, niter/3, [](size_t i) {do_something("G0", i);});
+    parallel_for("TASK_G_0", 0, niter/3, [=](size_t i) {do_something("G0", i, step);});
 
-    for(int i=0; i<niter/3; i++) { do_something("G1", i); }
+    for(int i=0; i<niter/3; i++) { do_something("G1", i, step); }
 
-    parallel_for("TASK_G_1", 0, niter/3, [](size_t i) {do_something("G2", i);});
+    parallel_for("TASK_G_1", 0, niter/3, [=](size_t i) {do_something("G2", i, step);});
 }
 
 
 int main(int argc, char **argv)
 {
   const int nthreads = 3;
-  const int nsteps = 10;
+  const int nsteps = 2;
 
   STS sched(nthreads);
 
-  //  for (int step=0; step<nsteps; step++) //TODO
+  for (int step=0; step<nsteps; step++)
   {
       sched.reschedule();
-      //TODO: wait until scheduled
-      sched.run("TASK_F", []{f();});
-      sched.run("TASK_G", []{g();});
+      sched.run("TASK_F", [=]{f(step);});
+      sched.run("TASK_G", [=]{g(step);});
       sched.wait();
   }
+  sched.finish();
 }

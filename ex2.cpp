@@ -105,12 +105,19 @@ class STS {
 public:
     STS(int n) {
         instance_ = this;  //should verify that not 2 are created
-        scheduleCounter.store(0, std::memory_order_release);
+        stepCounter.store(0, std::memory_order_release);
         std::vector<int> ids(n);
         std::iota(ids.begin(),ids.end(),0);
         threads_.reserve(n);
         threads_.insert(threads_.end(), ids.begin(), ids.end());
     }
+    ~STS() {
+        stepCounter.store(-1, std::memory_order_release);
+        for(unsigned int i=1;i<threads_.size();i++) {
+            threads_[i].join();
+        }
+    }
+
     void assign(std::string label, int threadId, Range<Ratio> range = Range<Ratio>(1)) {
         threads_.at(threadId).addSubtask(getTaskId(label), range);
     }
@@ -123,7 +130,7 @@ public:
         for (auto &task: tasks_) {
             task.store(nullptr);
         }
-        scheduleCounter.store(scheduleCounter+1, std::memory_order_release); //TODO: test doing just this without clear+reassign. Only subtask.done_ needs to be reset to false
+        stepCounter.store(stepCounter+1, std::memory_order_release); //TODO: test doing just this without clear+reassign. Only subtask.done_ needs to be reset to false
     }
     template<typename F>
     void run(std::string label, F function) {
@@ -140,12 +147,6 @@ public:
         for(unsigned int i=1;i<threads_.size();i++) {
             auto &thread=threads_[i];
             while(!(thread.getSubtask(thread.countSubtask()-1).done_.load(std::memory_order_acquire)));
-        }
-    }
-    void finish() {
-        scheduleCounter.store(-1, std::memory_order_release);
-        for(unsigned int i=1;i<threads_.size();i++) {
-            threads_[i].join();
         }
     }
 
@@ -176,7 +177,7 @@ private:
     std::vector<Thread> threads_;
     static STS *instance_;
 public:
-    std::atomic<int> scheduleCounter;
+    std::atomic<int> stepCounter;
 };
 
 STS *STS::instance_ = nullptr;
@@ -201,7 +202,7 @@ void Thread::doWork(int id) {
     STS *sts = STS::getInstance();
     for (int i=0; ; i++) {
         int c;
-        while ((c=sts->scheduleCounter.load(std::memory_order_acquire))==i);
+        while ((c=sts->stepCounter.load(std::memory_order_acquire))==i);
         if (c<0) break;
         processQueue();
     }
@@ -273,10 +274,12 @@ int main(int argc, char **argv)
 
   for (int step=0; step<nsteps; step++)
   {
-      sched.reschedule();
+      if (step==0) 
+          sched.reschedule(); //can be done every step if desired
+      else
+          sched.nextStep();
       sched.run("TASK_F", [=]{f(step);});
       sched.run("TASK_G", [=]{g(step);});
       sched.wait();
   }
-  sched.finish();
 }

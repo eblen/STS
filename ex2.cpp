@@ -39,13 +39,12 @@ public:
         taskQueue_.emplace_back(taskId, range);
         return &(taskQueue_.back());
     }
-    void clearSubtasks() {
-        taskQueue_.clear();
+    void clearSubtasks() { taskQueue_.clear(); }
+    SubTask const* getNextSubtask() { return &(taskQueue_[nextSubtaskId_]); }
+    void resetTaskQueue(int id) { 
+        if (id==0) nextSubtaskId_ = 0;
+        for (auto &s: taskQueue_) s.done_=false;
     }
-    SubTask const* getNextSubtask() {
-        return &(taskQueue_[nextSubtaskId_]);
-    }
-
     void join() { thread_->join(); }
     static int getId() { return id_; }
     void wait() {
@@ -123,6 +122,8 @@ public:
         std::iota(ids.begin(),ids.end(),0);
         threads_.reserve(n);
         threads_.insert(threads_.end(), ids.begin(), ids.end());
+        //create default schedule
+        for(int id: ids) assign("default", id, {{id,n},{id+1,n}});
     }
     ~STS() {
         stepCounter.store(-1, std::memory_order_release);
@@ -148,15 +149,27 @@ public:
         for (auto &task: tasks_) {
             task.task_.store(nullptr);
         }
+        for (int i=0;i<threads_.size();i++) {
+            threads_[i].resetTaskQueue(i);
+        }
         stepCounter.store(stepCounter+1, std::memory_order_release); //TODO: test doing just this without clear+reassign. Only subtask.done_ needs to be reset to false
     }
     template<typename F>
     void run(std::string label, F function) {
-        tasks_[getTaskId(label)].task_.store(new BasicTask<F>(function));
+        if (bUseDefaultSchedule_) {
+            function();
+        } else {
+            tasks_[getTaskId(label)].task_.store(new BasicTask<F>(function));
+        }
     }
     template<typename F>
     void parallel_for(std::string label, int start, int end, F f) {
-        int taskId = getTaskId(label);
+        int taskId = 0;
+        if (bUseDefaultSchedule_) {
+            nextStep();
+        } else {
+            taskId = getTaskId(label);
+        }
         auto &task = tasks_[taskId];
         task.task_.store(new LoopTask<F>(f, {start, end}));
         auto &thread = threads_[Thread::getId()];
@@ -168,9 +181,11 @@ public:
     }
     void reschedule();
     void wait() {
-        threads_[0].processQueue();
-        for(unsigned int i=1;i<threads_.size();i++) {
-            threads_[i].wait();
+        if (!bUseDefaultSchedule_) {
+            threads_[0].processQueue();
+            for(unsigned int i=1;i<threads_.size();i++) {
+                threads_[i].wait();
+            }
         }
     }
     static STS *getInstance() { return instance_; } //should this auto-create it if isn't created by the user?
@@ -199,6 +214,7 @@ private:
     std::map<std::string,int> taskLabels_;
     std::vector<Thread> threads_;
     static STS *instance_;
+    bool bUseDefaultSchedule_ = true;
 public:
     std::atomic<int> stepCounter;
 };
@@ -231,7 +247,8 @@ void Thread::doWork() {
 }
 
 void Thread::processQueue() { 
-    while(nextSubtaskId_<taskQueue_.size()) {
+    int s = taskQueue_.size();
+    while(nextSubtaskId_<s) {
         processTask();
     }
     nextSubtaskId_=0;
@@ -248,6 +265,7 @@ void Thread::processTask() {
 void STS::reschedule()
 {
     clearAssignments();
+    bUseDefaultSchedule_ = false;
 
     assign("TASK_F", 1);
     assign("TASK_G", 2); 
@@ -291,15 +309,15 @@ void g(int step) {
 int main(int argc, char **argv)
 {
   const int nthreads = 3;
-  const int nsteps = 2;
+  const int nsteps = 3;
 
   STS sched(nthreads);
 
   for (int step=0; step<nsteps; step++)
   {
-      if (true) //step==0) 
+      if(step==2) 
           sched.reschedule(); //can be done every step if desired
-      else
+      if(step==3) 
           sched.nextStep();
       sched.run("TASK_F", [=]{f(step);});
       sched.run("TASK_G", [=]{g(step);});

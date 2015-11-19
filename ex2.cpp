@@ -12,10 +12,8 @@
 #include <math.h>
 #include "range.h"
 
-//sts code. This should of course not be here but in sts.h. This is just to show the interface and make it compile (but of course not link).
 
 using sts_clock = std::chrono::steady_clock;
-
 //Describes part of Task done by one thread
 struct SubTask {
     SubTask(int taskId, Range<Ratio> range) : taskId_(taskId), range_(range) {
@@ -48,8 +46,8 @@ public:
     }
     void clearSubtasks() { taskQueue_.clear(); }
     SubTask const* getNextSubtask() { return &(taskQueue_[nextSubtaskId_]); }
-    void resetTaskQueue(int id) { 
-        if (id==0) nextSubtaskId_ = 0;
+    void resetTaskQueue() {  //should only be called by thread associated with the object
+        if (id_==0) nextSubtaskId_ = 0;
         for (auto &s: taskQueue_) s.done_=false;
     }
     void join() { thread_->join(); }
@@ -153,13 +151,12 @@ public:
         }
     }
     void nextStep() {
+        assert(Thread::getId()==0);
         for (auto &task: tasks_) {
             task.task_.store(nullptr);
         }
-        for (int i=0;i<threads_.size();i++) {
-            threads_[i].resetTaskQueue(i);
-        }
-        stepCounter.store(stepCounter+1, std::memory_order_release); //TODO: test doing just this without clear+reassign. Only subtask.done_ needs to be reset to false
+        threads_[0].resetTaskQueue();
+        stepCounter.store(stepCounter+1, std::memory_order_release);
     }
     template<typename F>
     void run(std::string label, F function) {
@@ -212,13 +209,12 @@ public:
         return t;
     }
 private:
-    int getTaskId(std::string label) {
-        static std::mutex mutex;
-        //std::lock_guard<std::mutex> lock(mutex); //TODO: needed if not in pre-scheduled mode
+    int getTaskId(std::string label) { //Creates new ID for unknown label. Creating IDs isn't thread safe. OK because assignments and run/parallel_for (if run without preassigment) are executed by master thread.
         auto it = taskLabels_.find(label);
         if (it != taskLabels_.end()) {
             return it->second;
         } else {
+            assert(Thread::getId()==0);
             unsigned int v = taskLabels_.size();
             assert(v==tasks_.size());
             assert(v==taskIds_.size());
@@ -268,6 +264,7 @@ void Thread::doWork() {
     for (int i=0; ; i++) {
         int c;
         while ((c=sts->stepCounter.load(std::memory_order_acquire))==i);
+        resetTaskQueue();
         if (c<0) break;
         processQueue();
     }

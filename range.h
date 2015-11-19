@@ -1,3 +1,6 @@
+#ifndef RANGE_H
+#define RANGE_H
+
 class Ratio {
 public:
     Ratio(int n, int d=1) : nom_(n), denom_(d) {} ;
@@ -6,9 +9,6 @@ private:
     int nom_, denom_;
     friend Ratio operator*(Ratio, int);
 };
-
-Ratio operator*(Ratio r, int n) { return Ratio(r.nom_*n,r.denom_); }
-Ratio operator*(int n, Ratio r) { return r*n; }
 
 template<class T>
 class Range {
@@ -33,3 +33,5 @@ template<class T>
 Range<T> operator+(Range<T> r, int n) { return Range<T>(r.start+n, r.end+n); }
 template<class T>
 Range<T> operator+(int n, Range<T> r) { return r+n; }
+
+#endif 

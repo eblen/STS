@@ -67,7 +67,7 @@ public:
     void join() { thread_->join(); }
     static int getId() { return id_; }
     void wait() {
-        taskQueue_[taskQueue_.size()-1].wait();
+        for(auto &task: taskQueue_) task.wait(); //If we have a task-graph it is sufficient to wait on last parent task. Without graph we need to make sure all are done.
     }
 private:
     void doWork();

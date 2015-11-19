@@ -14,16 +14,30 @@
 
 
 using sts_clock = std::chrono::steady_clock;
-//Describes part of Task done by one thread
+/*! \brief
+ * The part of a task done by one thread
+ *
+ * Contains the input to a thread what to do (taskId_, range_) and the output
+ * from the thread upon completion of the sub-task (done_, timing).
+ * For a loop task the range_ is the subsection done by a thread. A non-loop
+ * task is always completely executed by a single thread.
+ */
 struct SubTask {
+    /*! \brief
+     * Constructor
+     *
+     * \param[in] taskId   The ID of the task this is part of.
+     * \param[in] range    Out of a possible range from 0 to 1, the section in 
+                           this part. Ignored for non-loop tasks.
+     */
     SubTask(int taskId, Range<Ratio> range) : taskId_(taskId), range_(range) {
         done_.store(false, std::memory_order_release);
     }
-    int taskId_;
+    int taskId_;             /**< The ID of the task this is a port of */
     Range<Ratio> range_;
     std::atomic_bool done_;
-    std::chrono::duration<long, std::micro> wait_time_;
-    std::chrono::duration<long, std::micro> run_time_;
+    sts_clock::duration waitTime_;
+    sts_clock::duration runTime_;
     void wait() const {
         while(!(done_.load(std::memory_order_acquire)));
     }
@@ -194,8 +208,8 @@ public:
                 std::cerr << "Times for step " << stepCounter.load() << std::endl;
                 for (const auto &t : tasks_) {
                     for (const auto &st : t.subtasks_) {
-                        auto wtime = std::chrono::duration_cast<std::chrono::microseconds>(st->wait_time_).count();
-                        auto rtime = std::chrono::duration_cast<std::chrono::microseconds>(st->run_time_).count();
+                        auto wtime = std::chrono::duration_cast<std::chrono::microseconds>(st->waitTime_).count();
+                        auto rtime = std::chrono::duration_cast<std::chrono::microseconds>(st->runTime_).count();
                         std::cerr << getTaskLabel(st->taskId_) << " " << wtime << " " << rtime << std::endl;
                     }
                 }
@@ -280,12 +294,12 @@ void Thread::processQueue() {
 
 void Thread::processTask() {
     auto& subtask = taskQueue_[nextSubtaskId_++];
-    auto start_wait_time = sts_clock::now();
+    auto startWaitTime = sts_clock::now();
     ITask *task = STS::getInstance()->getTask(subtask.taskId_);
-    auto start_task_time = sts_clock::now();
-    subtask.wait_time_ = start_task_time - start_wait_time;
+    auto startTaskTime = sts_clock::now();
+    subtask.waitTime_ = startTaskTime - startWaitTime;
     task->run(subtask.range_);
-    subtask.run_time_ = sts_clock::now() - start_task_time;
+    subtask.runTime_ = sts_clock::now() - startTaskTime;
     subtask.done_.store(true, std::memory_order_release); //add store
 }
 

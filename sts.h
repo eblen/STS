@@ -16,6 +16,10 @@
 
 #include "range.h"
 
+#if __GNUC__ == 4 && __GNUC_MINOR__ <= 7
+#define thread_local __thread
+#endif
+
 using sts_clock = std::chrono::steady_clock;
 
 /* Overall design:

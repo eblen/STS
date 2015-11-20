@@ -10,6 +10,7 @@
 #include <iostream>
 #include <map>
 #include <memory>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -46,12 +47,13 @@ using sts_clock = std::chrono::steady_clock;
  * For a loop task the range_ is the subsection done by a thread. A basic
  * task is always completely executed by a single thread.
  */
-struct SubTask {
+class SubTask {
+public:
     /*! \brief
      * Constructor
      *
      * \param[in] taskId   The ID of the task this is part of.
-     * \param[in] range    Out of a possible range from 0 to 1, the section in 
+     * \param[in] range    Out of a possible range from 0 to 1, the section in
                            this part. Ignored for basic tasks.
      */
     SubTask(int taskId, Range<Ratio> range) : taskId_(taskId), range_(range) {
@@ -114,14 +116,14 @@ public:
      * \param[in] taskID  The ID of the task to add
      * \param[in] range   The range of the loop to be done by this thread
      *                    Ignored for basic tasks.
-     * \returns           Pointer to sub-task added                   
+     * \returns           Pointer to sub-task added
     */
     SubTask const* addSubtask(int taskId, Range<Ratio> range) {
         taskQueue_.emplace_back(taskId, range);
         return &(taskQueue_.back());
     }
     /*! \brief
-     * Clear all sub-tasks in the queue. 
+     * Clear all sub-tasks in the queue.
      *
      * Is called by clearAssignments to prepare for rescheduling tasks. */
     void clearSubtasks() { taskQueue_.clear(); }
@@ -220,7 +222,7 @@ template<class T>
 class AtomicPtr {
 public:
     AtomicPtr() { ptr_.store(nullptr, std::memory_order_release); }
-    ~AtomicPtr() { 
+    ~AtomicPtr() {
         T* p = get();
         if(p) delete p;
     }
@@ -229,7 +231,7 @@ public:
      *
      * \param[in] t   pointer to store
      */
-    void reset(T* t) { 
+    void reset(T* t) {
         T* o = ptr_.exchange(t, std::memory_order_release);
         if(o) delete o;
     }
@@ -266,7 +268,7 @@ struct Task {
  * with parallel_for(). The default schedule only uses loop level parallism and
  * executes run() functions synchronous. A schedule with task level parallelism
  * is created automatically by calling reschedule() or manual by calling assign().
- * After the queue of tasks in one schedule are completed, one can do one of 
+ * After the queue of tasks in one schedule are completed, one can do one of
  * three things for the next step:
  * a) call nextStep() and reuse the schedule
  * b) call reschedule() to let the scheduler automatically compute a new schedule
@@ -283,12 +285,12 @@ public:
         assert(!instance_);
         instance_ = this;
         stepCounter_.store(0, std::memory_order_release);
-        std::vector<int> ids(n);
-        std::iota(ids.begin(),ids.end(),0);
         threads_.reserve(n);
-        threads_.insert(threads_.end(), ids.begin(), ids.end()); //create threads
-        //create default schedule
-        for(int id: ids) assign("default", id, {{id,n},{id+1,n}});
+        for (int id = 0; id < n; id++) {
+            threads_.emplace_back(id); //create threads
+            //create default schedule
+            assign("default", id, { { id,n },{ id + 1,n } });
+        }
     }
     ~STS() {
         //-1 notifies threads to finish
@@ -413,7 +415,7 @@ public:
      * \param[in] task Id
      * \returns task functor
      */
-    ITaskFunctor *getTaskFunctor(int taskId) { 
+    ITaskFunctor *getTaskFunctor(int taskId) {
         ITaskFunctor *t;
         while(!(t=tasks_[taskId].functor_.get()));
         return t;
@@ -425,9 +427,9 @@ public:
      */
     int loadStepCounter() { return stepCounter_.load(std::memory_order_acquire); }
 private:
-    //Creates new ID for unknown label. 
+    //Creates new ID for unknown label.
     //Creating IDs isn't thread safe. OK because assignments and run/parallel_for (if run without preassigment) are executed by master thread while other threads wait on nextStep.
-    int getTaskId(std::string label) { 
+    int getTaskId(std::string label) {
         auto it = taskLabels_.find(label);
         if (it != taskLabels_.end()) {
             return it->second;
@@ -462,7 +464,7 @@ private:
     std::atomic<int> stepCounter_;
 };
 
-//For automatic labels one could use the file/line number such as: (strings can be avoided by using program counter instead) 
+//For automatic labels one could use the file/line number such as: (strings can be avoided by using program counter instead)
 #define STRINGIFY(x) #x
 #define TOSTRING(x) STRINGIFY(x)
 #define AT __FILE__ ":" TOSTRING(__LINE__)

@@ -3,7 +3,6 @@
 
 #include <cassert>
 
-#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <deque>
@@ -19,7 +18,7 @@
 #if __GNUC__ == 4 && __GNUC_MINOR__ <= 7
 #define thread_local __thread
 #endif
-#if _MSC_VER <= 1800
+#if _MSC_VER == 1800
 #define thread_local __declspec(thread)
 #endif
 

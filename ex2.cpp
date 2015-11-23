@@ -9,7 +9,7 @@
 #include <vector>
 #include "range.h"
 
-//sts code. This should of course not be here but in the sts.h. This is just to show the interface and make it compile (but of course not link).
+//sts code. This should of course not be here but in sts.h. This is just to show the interface and make it compile (but of course not link).
 
 //Describes part of Task done by one thread
 struct SubTask {
@@ -24,8 +24,8 @@ struct SubTask {
     }
 };
 
-//Each thread one object of this type
-//Wrapps std::thread and contains the task-queue
+//Each thread corresponds to one object of this type
+//Wraps std::thread and contains the task-queue
 class Thread {
 public:   
     Thread(int id) {
@@ -97,11 +97,11 @@ private:
 class TaskPtr {
 public:
     TaskPtr() { ptr_.store(nullptr, std::memory_order_release); }
-    ~TaskPtr() { if (ptr_) delete ptr_; } // descructor isn't allowed to be called in parallel
+    ~TaskPtr() { if (ptr_) delete ptr_; } // destructor isn't allowed to be called in parallel
     void store(ITask* t) { 
         ITask* o = ptr_;
         ptr_.store(t, std::memory_order_release);
-        if(o) delete o; //OK because not 2 stores are allowd
+        if(o) delete o; //OK because more than 1 store is not allowed
     }
     ITask* load() { return ptr_.load(std::memory_order_consume); }
 private:
@@ -116,7 +116,7 @@ struct Task {
 class STS {
 public:
     STS(int n) {
-        instance_ = this;  //should verify that not 2 are created
+        instance_ = this;  //should verify that only one is ever created
         stepCounter.store(0, std::memory_order_release);
         std::vector<int> ids(n);
         std::iota(ids.begin(),ids.end(),0);
@@ -174,7 +174,7 @@ public:
         task.task_.store(new LoopTask<F>(f, {start, end}));
         auto &thread = threads_[Thread::getId()];
         assert(thread.getNextSubtask()->taskId_==taskId);
-        thread.processTask(); //this implies that a task always participates in a lopp and is always next in queue
+        thread.processTask(); //this implies that a task always participates in a loop and is always next in queue
         for(auto s: task.subtasks_) {
             s->wait();
         }
@@ -188,7 +188,7 @@ public:
             }
         }
     }
-    static STS *getInstance() { return instance_; } //should this auto-create it if isn't created by the user?
+    static STS *getInstance() { return instance_; } //should this auto-create it if it isn't created by the user?
     ITask *getTask(int taskId) { 
         ITask *t;
         while(!(t=tasks_[taskId].task_.load()));
@@ -197,7 +197,7 @@ public:
 private:
     int getTaskId(std::string label) {
         static std::mutex mutex;
-        //std::lock_guard<std::mutex> lock(mutex); //TODO: needed if in not pre-scheduled mode
+        //std::lock_guard<std::mutex> lock(mutex); //TODO: needed if not in pre-scheduled mode
         auto it = taskLabels_.find(label);
         if (it != taskLabels_.end()) {
             return it->second;
@@ -210,7 +210,7 @@ private:
         }
     }       
 
-    std::deque<Task>  tasks_;  //It is essiential this isn't a vector (doesn't get moved when resizing). Because Is this ok to be a vector (linear) or does it need to be a tree. A serial tasks isn't before a loop. It is both before and after. 
+    std::deque<Task>  tasks_;  //It is essential this isn't a vector (doesn't get moved when resizing). Is this ok to be a list (linear) or does it need to be a tree? A serial task isn't before a loop. It is both before and after.
     std::map<std::string,int> taskLabels_;
     std::vector<Thread> threads_;
     static STS *instance_;
@@ -261,7 +261,7 @@ void Thread::processTask() {
     subtask.done_.store(true, std::memory_order_release); //add store
 }
 
-//of course this shouldn't explicit depend on the user tasks. In reallity the user tasks would be discovered.
+//of course this shouldn't explicitly depend on the user tasks. In reality the user tasks would be discovered.
 void STS::reschedule()
 {
     clearAssignments();

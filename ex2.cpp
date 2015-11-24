@@ -1,15 +1,20 @@
+#include <iostream>
 #include <algorithm>
 #include <atomic>
 #include <cassert>
+#include <chrono>
 #include <deque>
 #include <thread>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <vector>
+#include <math.h>
 #include "range.h"
 
 //sts code. This should of course not be here but in sts.h. This is just to show the interface and make it compile (but of course not link).
+
+using sts_clock = std::chrono::steady_clock;
 
 //Describes part of Task done by one thread
 struct SubTask {
@@ -19,6 +24,8 @@ struct SubTask {
     int taskId_;
     Range<Ratio> range_;
     std::atomic_bool done_;
+    std::chrono::duration<long, std::micro> wait_time_;
+    std::chrono::duration<long, std::micro> run_time_;
     void wait() const {
         while(!(done_.load(std::memory_order_acquire)));
     }
@@ -186,6 +193,16 @@ public:
             for(unsigned int i=1;i<threads_.size();i++) {
                 threads_[i].wait();
             }
+            if (bSTSDebug_) {
+                std::cerr << "Times for step " << stepCounter.load() << std::endl;
+                for (const auto &t : tasks_) {
+                    for (const auto &st : t.subtasks_) {
+                        auto wtime = std::chrono::duration_cast<std::chrono::microseconds>(st->wait_time_).count();
+                        auto rtime = std::chrono::duration_cast<std::chrono::microseconds>(st->run_time_).count();
+                        std::cerr << getTaskLabel(st->taskId_) << " " << wtime << " " << rtime << std::endl;
+                    }
+                }
+            }
         }
     }
     static STS *getInstance() { return instance_; } //should this auto-create it if it isn't created by the user?
@@ -204,17 +221,27 @@ private:
         } else {
             unsigned int v = taskLabels_.size();
             assert(v==tasks_.size());
+            assert(v==taskIds_.size());
             tasks_.resize(v+1);
             taskLabels_[label] = v;
+            taskIds_.push_back(label);
             return v;
         }
-    }       
+    }
+
+    std::string getTaskLabel(int id) const {
+        assert(-1 < id < taskIds_.size());
+        return taskIds_[id];
+    }
+
 
     std::deque<Task>  tasks_;  //It is essential this isn't a vector (doesn't get moved when resizing). Is this ok to be a list (linear) or does it need to be a tree? A serial task isn't before a loop. It is both before and after.
     std::map<std::string,int> taskLabels_;
+    std::vector<std::string> taskIds_;
     std::vector<Thread> threads_;
     static STS *instance_;
     bool bUseDefaultSchedule_ = true;
+    bool bSTSDebug_ = true;
 public:
     std::atomic<int> stepCounter;
 };
@@ -256,8 +283,12 @@ void Thread::processQueue() {
 
 void Thread::processTask() {
     auto& subtask = taskQueue_[nextSubtaskId_++];
+    auto start_wait_time = sts_clock::now();
     ITask *task = STS::getInstance()->getTask(subtask.taskId_);
+    auto start_task_time = sts_clock::now();
+    subtask.wait_time_ = start_task_time - start_wait_time;
     task->run(subtask.range_);
+    subtask.run_time_ = sts_clock::now() - start_task_time;
     subtask.done_.store(true, std::memory_order_release); //add store
 }
 
@@ -283,28 +314,47 @@ void STS::reschedule()
 }
 //end sts code. start example
 
-void do_something(const char* s, int i, int step) {
-    fprintf(stderr, "%s: i=%d step=%d tid=%d\n", s, i, step, Thread::getId());
+const int niters = 1000000;
+float A[niters];
+float B[niters/3];
+float C[niters/3];
+float D[niters/3];
+
+void do_something_A(const char* s, int i, int step) {
+    // fprintf(stderr, "%s: i=%d step=%d tid=%d\n", s, i, step, Thread::getId());
+    A[i] = sinf(i);
 }
 
-const int niter = 6;
+void do_something_B(const char* s, int i, int step) {
+    // fprintf(stderr, "%s: i=%d step=%d tid=%d\n", s, i, step, Thread::getId());
+    B[i] = sinf(i);
+}
+
+void do_something_C(const char* s, int i, int step) {
+    // fprintf(stderr, "%s: i=%d step=%d tid=%d\n", s, i, step, Thread::getId());
+    C[i] = sinf(i);
+}
+
+void do_something_D(const char* s, int i, int step) {
+    // fprintf(stderr, "%s: i=%d step=%d tid=%d\n", s, i, step, Thread::getId());
+    D[i] = sinf(i);
+}
 
 void f(int step) {
-    fprintf(stderr, "F: step=%d tid=%d\n", step, Thread::getId());
+    // fprintf(stderr, "F: step=%d tid=%d\n", step, Thread::getId());
 
-    parallel_for("TASK_F_0", 0, niter, [=](size_t i) {do_something("F0", i, step);});
+    parallel_for("TASK_F_0", 0, niters, [=](size_t i) {do_something_A("F0", i, step);});
 }
 
 void g(int step) {
-    fprintf(stderr, "G: step=%d tid=%d\n", step, Thread::getId());
+    // fprintf(stderr, "G: step=%d tid=%d\n", step, Thread::getId());
 
-    parallel_for("TASK_G_0", 0, niter/3, [=](size_t i) {do_something("G0", i, step);});
+    parallel_for("TASK_G_0", 0, niters/3, [=](size_t i) {do_something_B("G0", i, step);});
 
-    for(int i=0; i<niter/3; i++) { do_something("G1", i, step); }
+    for(int i=0; i<niters/3; i++) {do_something_C("G1", i, step);}
 
-    parallel_for("TASK_G_1", 0, niter/3, [=](size_t i) {do_something("G2", i, step);});
+    parallel_for("TASK_G_1", 0, niters/3, [=](size_t i) {do_something_D("G2", i, step);});
 }
-
 
 int main(int argc, char **argv)
 {
@@ -315,12 +365,16 @@ int main(int argc, char **argv)
 
   for (int step=0; step<nsteps; step++)
   {
+      /*
       if(step==2) 
           sched.reschedule(); //can be done every step if desired
       if(step==3) 
           sched.nextStep();
+      */
+      sched.reschedule();
       sched.run("TASK_F", [=]{f(step);});
       sched.run("TASK_G", [=]{g(step);});
       sched.wait();
+      printf("%f\n", A[niters/4] + B[niters/4] + C[niters/4] + D[niters/4]);
   }
 }

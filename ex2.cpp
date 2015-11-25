@@ -332,7 +332,7 @@ void STS::reschedule()
 }
 //end sts code. start example
 
-const int niters = 1000000;
+const int niters = 10000000;
 float A[niters];
 float B[niters/3];
 float C[niters/3];

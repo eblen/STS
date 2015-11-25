@@ -130,6 +130,7 @@ private:
 struct Task {
     TaskPtr task_;
     std::vector<SubTask const*> subtasks_;
+    sts_clock::duration waitTime_;
 };
 
 class STS {
@@ -194,7 +195,9 @@ public:
         assert(thread.getNextSubtask()->taskId_==taskId);
         thread.processTask(); //this implies that a task always participates in a loop and is always next in queue
         for(auto s: task.subtasks_) {
+            auto startWaitTime = sts_clock::now();
             s->wait();
+            task.waitTime_ = sts_clock::now() - startWaitTime;
         }
     }
     void reschedule();
@@ -211,6 +214,10 @@ public:
                         auto wtime = std::chrono::duration_cast<std::chrono::microseconds>(st->waitTime_).count();
                         auto rtime = std::chrono::duration_cast<std::chrono::microseconds>(st->runTime_).count();
                         std::cerr << getTaskLabel(st->taskId_) << " " << wtime << " " << rtime << std::endl;
+                    }
+                    if (t.subtasks_.size() > 1) {
+                        auto ltwtime = std::chrono::duration_cast<std::chrono::microseconds>(t.waitTime_).count();
+                        std::cerr << "Wait for task to complete " << ltwtime << std::endl;
                     }
                 }
             }

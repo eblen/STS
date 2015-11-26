@@ -19,6 +19,9 @@
 #if __GNUC__ == 4 && __GNUC_MINOR__ <= 7
 #define thread_local __thread
 #endif
+#if _MSC_VER <= 1800
+#define thread_local __declspec(thread)
+#endif
 
 using sts_clock = std::chrono::steady_clock;
 
@@ -105,6 +108,11 @@ public:
             thread_.reset(new std::thread([=](){id_=id; doWork();}));
         }
     }
+    //Move constructor only needed for MSVC2013 (tries to use copy otherwise and doesn't support defaulting)
+    //Not actually needed at runtime but needed at compile time for vector. Default move is OK but not thread-safe.
+    Thread(Thread &&o) { assert(false); }
+    Thread& operator= (Thread &&) { assert(false); }
+
     /*! \brief
      * Execute the whole queue of subtaks
      *
@@ -455,7 +463,7 @@ private:
      * \returns        task label
      */
     std::string getTaskLabel(int id) const {
-        assert(-1 < id < taskIds_.size());
+        assert(-1 < id && id < taskIds_.size());
         return taskIds_[id];
     }
     std::deque<Task>  tasks_;  //It is essential this isn't a vector (doesn't get moved when resizing). Is this ok to be a list (linear) or does it need to be a tree? A serial task isn't before a loop. It is both before and after.

@@ -15,7 +15,7 @@ void Thread::doWork() {
 }
 
 void Thread::processQueue() { 
-    int s = taskQueue_.size();
+    unsigned int s = taskQueue_.size();
     while(nextSubtaskId_<s) {
         processTask();
     }

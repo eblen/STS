@@ -8,7 +8,7 @@ void Thread::doWork() {
     STS *sts = STS::getInstance();
     for (int i=0; ; i++) {
         int c;
-        while ((c=sts->loadStepCounter())==i); //wait on current step to finish
+        while ((c=sts->loadStepCounter())==i); //wait on current step to finish. TODO: add gmx_pause
         resetTaskQueue();
         if (c<0) break; //negative task counter signals to terminate the thread
         processQueue();

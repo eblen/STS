@@ -85,6 +85,8 @@ public:
             thread_.reset(new std::thread([=](){id_=id; doWork();}));
         }
     }
+    Thread(Thread&&) = delete; //nextSubtaskId_ access would not be thread-safe
+    Thread& operator=(Thread&&) = delete;
     /*! \brief
      * Execute the whole queue of subtasks
      *

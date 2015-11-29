@@ -265,7 +265,8 @@ public:
      */
     ITaskFunctor *getTaskFunctor(int taskId) {
         ITaskFunctor *t;
-        while(!(t=tasks_[taskId].functor_.get()));
+        auto &func = tasks_[taskId].functor_;
+        while(!(t=func.get())); //TODO: add gmx_pause
         return t;
     }
     /* \brief

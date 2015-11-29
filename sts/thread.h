@@ -85,11 +85,6 @@ public:
             thread_.reset(new std::thread([=](){id_=id; doWork();}));
         }
     }
-    //Move constructor only needed for MSVC2013 (tries to use copy otherwise and doesn't support defaulting)
-    //Not actually needed at runtime but needed at compile time for vector. Default move is OK but not thread-safe.
-    Thread(Thread &&o) { assert(false); }
-    Thread& operator= (Thread &&) { assert(false); }
-
     /*! \brief
      * Execute the whole queue of subtasks
      *

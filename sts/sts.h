@@ -317,6 +317,7 @@ private:
         for (auto it: taskLabels_) {
             if (it.second == id) return it.first;
         }
+        throw std::invalid_argument("Invalid task Id: "+id);
     }
     std::deque<Task>  tasks_;  //It is essential this isn't a vector (doesn't get moved when resizing). Is this ok to be a list (linear) or does it need to be a tree? A serial task isn't before a loop. It is both before and after.
     std::map<std::string,int> taskLabels_;

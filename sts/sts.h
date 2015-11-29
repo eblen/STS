@@ -36,16 +36,16 @@ public:
      * \param[in] f    lambda of loop body
      * \param[in] r    range of loop
      */
-    LoopTaskFunctor<F>(F f, Range<int> r): body_(f), range_(r) {}
+    LoopTaskFunctor<F>(F f, Range<int64_t> r): body_(f), range_(r) {}
     void run(Range<Ratio> r) {
-        Range<int> s = range_.subset(r); //compute sub-range of this execution
+        Range<int64_t> s = range_.subset(r); //compute sub-range of this execution
         for (int i=s.start; i<s.end; i++) {
             body_(i);
         }
     }
 private:
     F body_;
-    Range<int> range_;
+    Range<int64_t> range_;
 };
 
 //! Basic (non-loop) task functor
@@ -131,11 +131,16 @@ public:
     void setNumThreads(int n) {
         for (int id = threads_.size(); id < n; id++) {
             threads_.emplace_back(id); //create threads
-            //create default schedule
-            assign("default", id, { { id,n },{ id + 1,n } });
         }
         for (int id = threads_.size(); id > n; id--) {
             threads_.pop_back();
+        }
+        if (bUseDefaultSchedule_) {
+            clearAssignments();
+            for (int id = 0; id < n; id++) {
+                assign("default", id, {{id,     n},
+                                       {id + 1, n}});
+            }
         }
     }
     /*! \brief
@@ -152,6 +157,7 @@ public:
      */
     void assign(std::string label, int threadId, Range<Ratio> range = Range<Ratio>(1)) {
         int id = getTaskId(label);
+        assert(range.start>=0 && range.end<=1);
         SubTask const* subtask = threads_.at(threadId).addSubtask(id, range);
         tasks_[id].subtasks_.push_back(subtask);
     }
@@ -196,10 +202,11 @@ public:
      * \param[in] body     The function (or lambda) to execute as loop body
      */
     template<typename F>
-    void parallel_for(std::string label, int start, int end, F body) {
+    void parallel_for(std::string label, int64_t start, int64_t end, F body) {
         int taskId = 0;
         if (bUseDefaultSchedule_) {
             nextStep(); //Default schedule has only a single step and the user doesn't need to call nextStep
+            assert(getTaskId("default")==taskId);
         } else {
             taskId = getTaskId(label);
         }
@@ -207,7 +214,7 @@ public:
         task.functor_.reset(new LoopTaskFunctor<F>(body, {start, end}));
         auto &thread = threads_[Thread::getId()];
         //Calling processTask implies that the thread calling parallel_for participates in the loop and executes it next in queue
-        assert(thread.getNextSubtask()->taskId_==taskId);
+        assert(thread.getNextSubtask()->getTaskId()==taskId);
         thread.processTask();
         for(auto s: task.subtasks_) {
             auto startWaitTime = sts_clock::now();
@@ -230,7 +237,7 @@ public:
                     for (const auto &st : t.subtasks_) {
                         auto wtime = std::chrono::duration_cast<std::chrono::microseconds>(st->waitTime_).count();
                         auto rtime = std::chrono::duration_cast<std::chrono::microseconds>(st->runTime_).count();
-                        std::cerr << getTaskLabel(st->taskId_) << " " << wtime << " " << rtime << std::endl;
+                        std::cerr << getTaskLabel(st->getTaskId()) << " " << wtime << " " << rtime << std::endl;
                     }
                     if (t.subtasks_.size() > 1) {
                         auto ltwtime = std::chrono::duration_cast<std::chrono::microseconds>(t.waitTime_).count();

@@ -13,7 +13,7 @@
  * which thread and in which order. For loops one can specify which part
  * of a loop is done by each participating thread. The idea is that this
  * schedule is either provided by the user of the framework or automatically
- * computed based on the timing from the privious step. One step contains
+ * computed based on the timing from the previous step. One step contains
  * a number of scheduled tasks and a new step starts when the scheduled
  * tasks are completed. It is up to the application to decide how many tasks
  * should be scheduled together, and the scheduling step might or might not
@@ -38,7 +38,7 @@
  * \param[in] body     The function (or lambda) to execute as loop body
  */
 template<typename F>
-void parallel_for(std::string l, int start, int end, F f)
+void parallel_for(std::string l, int64_t start, int64_t end, F f)
 {
     STS::getInstance()->parallel_for(l, start, end, f);
 }
@@ -65,7 +65,7 @@ void run(std::string l, F f)
  *
  * \param[in] label    The label of the task. Needs to match the run()/parallel_for() label
  * \param[in] threadId The Id of the thread to assign to
- * \param[in] range    The range for a loop task to assing. Ignored for basic task.
+ * \param[in] range    The range for a loop task to assign. Ignored for basic task.
  */
 void assign(std::string label, int threadId, Range<Ratio> range = Range<Ratio>(1))
 {

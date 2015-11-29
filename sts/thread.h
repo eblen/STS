@@ -54,12 +54,15 @@ public:
     {
         done_.store(done, std::memory_order_release);
     }
-    int taskId_;                   /**< The ID of the task this is a part of */
-    Range<Ratio> range_;           /**< Range (out of [0,1]) of loop part */
+    int getTaskId() const { return taskId_; }               //!< get Task Id
+    const Range<Ratio>& getRange() const { return range_; } //!< get Range
+
     sts_clock::duration waitTime_; /**< Time spent until task was ready */
     sts_clock::duration runTime_;  /**< Time spent executing sub-task  */
 private:
-    std::atomic_bool done_;  /**< Sub-task is done */
+    int taskId_;                   /**< The ID of the task this is a part of */
+    Range<Ratio> range_;           /**< Range (out of [0,1]) of loop part */
+    std::atomic_bool done_;        /**< Sub-task is done */
 };
 
 /*! \brief

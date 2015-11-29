@@ -141,6 +141,7 @@ public:
                 assign("default", id, {{id,     n},
                                        {id + 1, n}});
             }
+            bUseDefaultSchedule_ = true;
         }
     }
     /*! \brief
@@ -160,6 +161,7 @@ public:
         assert(range.start>=0 && range.end<=1);
         SubTask const* subtask = threads_.at(threadId).addSubtask(id, range);
         tasks_[id].subtasks_.push_back(subtask);
+        bUseDefaultSchedule_ = false;
     }
     //! Clear all assignments
     void clearAssignments() {

@@ -8,7 +8,6 @@ std::unique_ptr<STS> STS::instance_(new STS());
 void STS::reschedule()
 {
     clearAssignments();
-    bUseDefaultSchedule_ = false;
 
     assign("TASK_F", 1);
     assign("TASK_G", 2); 

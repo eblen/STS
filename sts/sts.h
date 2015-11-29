@@ -301,10 +301,8 @@ private:
             assert(Thread::getId()==0); //creating thread should only be done by master thread
             unsigned int v = taskLabels_.size();
             assert(v==tasks_.size());
-            assert(v==taskIds_.size());
             tasks_.resize(v+1);
             taskLabels_[label] = v;
-            taskIds_.push_back(label);
             return v;
         }
     }
@@ -315,12 +313,12 @@ private:
      * \returns        task label
      */
     std::string getTaskLabel(int id) const {
-        assert(-1 < id && id < taskIds_.size());
-        return taskIds_[id];
+        for (auto it: taskLabels_) {
+            if (it.second == id) return it.first;
+        }
     }
     std::deque<Task>  tasks_;  //It is essential this isn't a vector (doesn't get moved when resizing). Is this ok to be a list (linear) or does it need to be a tree? A serial task isn't before a loop. It is both before and after.
     std::map<std::string,int> taskLabels_;
-    std::vector<std::string> taskIds_;
     std::deque<Thread> threads_;
     static std::unique_ptr<STS> instance_;
     bool bUseDefaultSchedule_ = true;

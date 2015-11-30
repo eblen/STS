@@ -1,5 +1,5 @@
-#ifndef RANGE_H
-#define RANGE_H
+#ifndef STS_RANGE_H
+#define STS_RANGE_H
 
 class Ratio {
 public:
@@ -34,4 +34,4 @@ Range<T> operator+(Range<T> r, int n) { return Range<T>(r.start+n, r.end+n); }
 template<class T>
 Range<T> operator+(int n, Range<T> r) { return r+n; }
 
-#endif 
+#endif // STS_RANGE_H

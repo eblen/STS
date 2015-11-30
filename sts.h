@@ -37,7 +37,7 @@ using sts_clock = std::chrono::steady_clock;
  * computed based on the timing from the privious step. One step contains
  * a number of scheduled tasks and a new step starts when the scheduled
  * tasks are completed. It is up to the application to decide how many tasks
- * should be scheduled together and the scheduling step, might or might not
+ * should be scheduled together, and the scheduling step might or might not
  * be identical to the application step. A schedule can be reused or changed
  * after a step. The part of a task done by a thread is called a sub-task.
  * A simple task is always fully done by one thread and for a loop-task the
@@ -82,7 +82,7 @@ public:
     int taskId_;                   /**< The ID of the task this is a part of */
     Range<Ratio> range_;           /**< Range (out of [0,1]) of loop part */
     sts_clock::duration waitTime_; /**< Time spent until task was ready */
-    sts_clock::duration runTime_;  /**< Time spent sexecuting sub-task  */
+    sts_clock::duration runTime_;  /**< Time spent executing sub-task  */
 private:
     std::atomic_bool done_;  /**< Sub-task is done */
 };
@@ -113,7 +113,7 @@ public:
     Thread& operator= (Thread &&) { assert(false); }
 
     /*! \brief
-     * Execute the whole queue of subtaks
+     * Execute the whole queue of subtasks
      *
      * Gets executed for the OS thread by STS::wait and for STS created
      * threads from Thread::doWork
@@ -275,9 +275,9 @@ struct Task {
 /*! \brief
  * Static task scheduler
  *
- * Allows to run asynchronous function with run() and execute loops in parallel
- * with parallel_for(). The default schedule only uses loop level parallism and
- * executes run() functions synchronous. A schedule with task level parallelism
+ * Allows running an asynchronous function with run() and execute loops in parallel
+ * with parallel_for(). The default schedule only uses loop level parallelism and
+ * executes run() functions synchronously. A schedule with task level parallelism
  * is created automatically by calling reschedule() or manual by calling assign().
  * After the queue of tasks in one schedule are completed, one can do one of
  * three things for the next step:
@@ -313,9 +313,9 @@ public:
     /*! \brief
      * Assign task to a thread
      *
-     * If a range for a loop task is specified only that section of the loop is assigned.
+     * If a range for a loop task is specified, only that section of the loop is assigned.
      * In that case it is important to assign the remaining loop out of [0,1] also to
-     * some thread. It is valid to assign multiple parts of a loop to the same thread.
+     * some other thread. It is valid to assign multiple parts of a loop to the same thread.
      * The order of assign calls specifies in which order the thread executes the tasks.
      *
      * \param[in] label    The label of the task. Needs to match the run()/parallel_for() label
@@ -387,7 +387,7 @@ public:
             task.waitTime_ = sts_clock::now() - startWaitTime;
         }
     }
-    //! Automatic compute new schedule based on previous step timing
+    //! Automatically compute new schedule based on previous step timing
     void reschedule();
     //! Wait on all tasks to finish
     void wait() {
@@ -421,7 +421,7 @@ public:
     /*! \brief
      * Returns the task functor for a given task Id
      *
-     * Waits on functor to be ready if the correspong run()/parallel_for() hasn't been executed yet.
+     * Waits on functor to be ready if the corresponding run()/parallel_for() hasn't been executed yet.
      *
      * \param[in] task Id
      * \returns task functor
@@ -439,7 +439,7 @@ public:
     int loadStepCounter() { return stepCounter_.load(std::memory_order_acquire); }
 private:
     //Creates new ID for unknown label.
-    //Creating IDs isn't thread safe. OK because assignments and run/parallel_for (if run without preassigment) are executed by master thread while other threads wait on nextStep.
+    //Creating IDs isn't thread safe. OK because assignments and run/parallel_for (if run without pre-assignment) are executed by master thread while other threads wait on nextStep.
     int getTaskId(std::string label) {
         auto it = taskLabels_.find(label);
         if (it != taskLabels_.end()) {

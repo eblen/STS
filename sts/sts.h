@@ -111,24 +111,31 @@ public:
     /*! \brief
      * Constructor
      *
-     * \param[in] n Number of threads to use (including OS thread)
      */
-    STS(int n) {
-        assert(!instance_);
-        instance_ = this;
+    STS() {
         stepCounter_.store(0, std::memory_order_release);
-        threads_.reserve(n);
-        for (int id = 0; id < n; id++) {
-            threads_.emplace_back(id); //create threads
-            //create default schedule
-            assign("default", id, { { id,n },{ id + 1,n } });
-        }
+        threads_.emplace_back(0);
     }
     ~STS() {
         //-1 notifies threads to finish
         stepCounter_.store(-1, std::memory_order_release);
         for(unsigned int i=1;i<threads_.size();i++) {
             threads_[i].join();
+        }
+    }
+    /*! \brief
+     * Set number of threads in the pool
+     *
+     * \param[in] n number of threads to use (including OS thread)
+     */
+    void setNumThreads(int n) {
+        for (int id = threads_.size(); id < n; id++) {
+            threads_.emplace_back(id); //create threads
+            //create default schedule
+            assign("default", id, { { id,n },{ id + 1,n } });
+        }
+        for (int id = threads_.size(); id > n; id--) {
+            threads_.pop_back();
         }
     }
     /*! \brief
@@ -238,7 +245,7 @@ public:
      *
      * \returns STS instance
      */
-    static STS *getInstance() { return instance_; } //should this auto-create it if it isn't created by the user?
+    static STS *getInstance() { return instance_.get(); }
     /*! \brief
      * Returns the task functor for a given task Id
      *
@@ -305,8 +312,8 @@ private:
     std::deque<Task>  tasks_;  //It is essential this isn't a vector (doesn't get moved when resizing). Is this ok to be a list (linear) or does it need to be a tree? A serial task isn't before a loop. It is both before and after.
     std::map<std::string,int> taskLabels_;
     std::vector<std::string> taskIds_;
-    std::vector<Thread> threads_;
-    static STS *instance_;
+    std::deque<Thread> threads_;
+    static std::unique_ptr<STS> instance_;
     bool bUseDefaultSchedule_ = true;
     bool bSTSDebug_ = true;
     std::atomic<int> stepCounter_;

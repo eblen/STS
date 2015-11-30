@@ -48,20 +48,20 @@ int main(int argc, char **argv)
   const int nthreads = 3;
   const int nsteps = 3;
 
-  STS sched(nthreads);
+  setNumThreads(nthreads);
 
   for (int step=0; step<nsteps; step++)
   {
       /*
       if(step==2) 
-          sched.reschedule(); //can be done every step if desired
+          reschedule(); //can be done every step if desired
       if(step==3) 
-          sched.nextStep();
+          nextStep();
       */
-      sched.reschedule();
-      sched.run("TASK_F", [=]{f(step);});
-      sched.run("TASK_G", [=]{g(step);});
-      sched.wait();
+      reschedule();
+      run("TASK_F", [=]{f(step);});
+      run("TASK_G", [=]{g(step);});
+      wait();
       printf("%f\n", A[niters/4] + B[niters/4] + C[niters/4] + D[niters/4]);
   }
 }

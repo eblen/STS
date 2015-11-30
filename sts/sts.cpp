@@ -1,6 +1,8 @@
 #include "sts.h"
 
-STS *STS::instance_ = nullptr;
+#include <memory>
+
+std::unique_ptr<STS> STS::instance_(new STS());
 
 //This is currently just a manual schedule for the example. Automatic scheduling isn't done yet.
 void STS::reschedule()

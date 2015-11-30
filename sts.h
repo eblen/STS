@@ -38,7 +38,8 @@
  * \param[in] body     The function (or lambda) to execute as loop body
  */
 template<typename F>
-void parallel_for(std::string l, int start, int end, F f) {
+void parallel_for(std::string l, int start, int end, F f)
+{
     STS::getInstance()->parallel_for(l, start, end, f);
 }
 
@@ -49,7 +50,8 @@ void parallel_for(std::string l, int start, int end, F f) {
  * \param[in] function  The function (or lambda) to execute
  */
 template<typename F>
-void run(std::string l, F f) {
+void run(std::string l, F f)
+{
     STS::getInstance()->run(l, f);
 }
 
@@ -82,10 +84,21 @@ void reschedule()
     STS::getInstance()->reschedule();
 }
 
+/*! \brief
+ * Set number of threads in the pool
+ *
+ * \param[in] n number of threads to use (including OS thread)
+ */
+void setNumThreads(int n)
+{
+    STS::getInstance()->setNumThreads(n);
+}
+
 //! Wait on all tasks to finish
 void wait()
 {
     STS::getInstance()->wait();
 }
+
 
 #endif

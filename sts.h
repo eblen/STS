@@ -7,22 +7,23 @@
  * The framework can execute simple tasks (via "run") and execute loops in
  * parallel (via "parallel_for"). It supports two run modi: either with an
  * explicit schedule or with a default schedule. With the default schedule
- * tasks are run in serial and only loop level parallelism is used. This
- * is useful if either the tasks are not yet known or only simple parallelism
- * is needed. With an explicit schedule one can specify which task runs on
- * which thread and in which order. For loops one can specify which part
- * of a loop is done by each participating thread. The idea is that this
- * schedule is either provided by the user of the framework or automatically
- * computed based on the timing from the previous step. One step contains
- * a number of scheduled tasks and a new step starts when the scheduled
- * tasks are completed. It is up to the application to decide how many tasks
- * should be scheduled together, and the scheduling step might or might not
- * be identical to the application step. A schedule can be reused or changed
- * after a step. The part of a task done by a thread is called a sub-task.
- * A simple task is always fully done by one thread and for a loop-task the
- * range done by each thread is specified. The whole design is lock free
- * and only relies on atomics.
-*/
+ * tasks are run in serial and only loop level parallelism is used. This is
+ * useful if either the tasks are not yet known or only simple parallelism is
+ * needed. With an explicit schedule one can specify which task runs on which
+ * thread and in which order (based on the order of task assignment). Loops
+ * can be split among the threads using ratios (e.g. thread 0 does 1/3 of
+ * the loop while thread 1 does the remaining 2/3). The idea is that this
+ * schedule is either computed by the user of the framework using "assign"
+ * or automatically computed by the framework using "reschedule." (Automatic
+ * scheduling is not yet implemented.) Timing data is recorded for each task
+ * so that adjustments can be made (or not) after each "step." One "step"
+ * contains a number of scheduled tasks and a new step starts when "nextStep"
+ * is called. Normally, a step will be one iteration of a main loop, like a
+ * time step in MD, but this is of course not required. The part of a task
+ * done by a thread is called a sub-task. A simple task is always fully
+ * done by one thread and for a loop-task the range done by each thread is
+ * specified. The whole design is lock free and only relies on atomics.
+ */
 
 //For automatic labels one could use the file/line number such as: (strings can be avoided by using program counter instead)
 #define STRINGIFY(x) #x

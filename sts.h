@@ -73,6 +73,12 @@ void assign(std::string label, int threadId, Range<Ratio> range = Range<Ratio>(1
     STS::getInstance()->assign(label, threadId, range);
 }
 
+//! Clear all thread assignments
+void clearAssignments()
+{
+    STS::getInstance()->clearAssignments();
+}
+
 //! Notify threads to start computing the next step
 void nextStep()
 {

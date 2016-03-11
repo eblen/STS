@@ -7,8 +7,7 @@ int thread_local Thread::id_ = 0;
 void Thread::doWork() {
     STS *sts = STS::getInstance();
     for (int i=0; ; i++) {
-        int c;
-        while ((c=sts->loadStepCounter())==i); //wait on current step to finish. TODO: add gmx_pause
+        int c = sts->waitOnStepCounter(i);
         resetTaskQueue();
         if (c<0) break; //negative task counter signals to terminate the thread
         processQueue();
@@ -33,3 +32,4 @@ void Thread::processTask() {
     subtask.runTime_ = sts_clock::now() - startTaskTime;
     subtask.setDone(true);
 }
+

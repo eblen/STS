@@ -89,6 +89,12 @@ public:
      * \returns pointer
      */
     T* get() { return ptr_.load(std::memory_order_consume); }
+    /*! \brief
+     * Wait for pointer to be set (non-null)
+     *
+     * \returns pointer
+     */
+    T* wait() { return wait_until_not(ptr_, static_cast<T*>(nullptr)); }
 private:
     std::atomic<T*> ptr_;
 };
@@ -264,10 +270,8 @@ public:
      * \returns task functor
      */
     ITaskFunctor *getTaskFunctor(int taskId) {
-        ITaskFunctor *t;
         auto &func = tasks_[taskId].functor_;
-        while(!(t=func.get())); //TODO: add gmx_pause
-        return t;
+        return func.wait();
     }
     /* \brief
      * Load atomic step counter
@@ -275,6 +279,12 @@ public:
      * \returns step counter
      */
     int loadStepCounter() { return stepCounter_.load(std::memory_order_acquire); }
+    /* \brief
+     * Wait on atomic step counter to change
+     *
+     * param[in] c   last step processed by thread
+     */
+    int waitOnStepCounter(int c) {return wait_until_not(stepCounter_, c);}
 private:
     /*! \brief
      * A task to be executed

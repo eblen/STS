@@ -20,6 +20,34 @@
 
 using sts_clock = std::chrono::steady_clock;
 
+// TODO: Add gmx_pause.
+// TODO: Consider wait_until_not variant that doesn't return a value.
+/*! \brief
+ * Wait until atomic variable a is set to value v
+ *
+ * \param[in] a   atomic variable
+ * \param[in] v   value
+ */
+template <typename T>
+void wait_until(const std::atomic<T> &a, T v) {
+    while (a.load() != v);
+}
+/*! \brief
+ * Wait until atomic variable a is not set to value v
+ *
+ * \param[in] a   atomic variable
+ * \param[in] v   value
+ * \returns       new value of a
+ */
+template <typename T>
+T wait_until_not(const std::atomic<T> &a, T v) {
+    T v2;
+    do {
+        v2 = a.load();
+    } while(v2 == v);
+    return v2;
+}
+
 /*! \brief
  * The part of a task done by one thread
  *
@@ -43,7 +71,7 @@ public:
     //! Wait on sub-task to complete
     void wait() const
     {
-        while(!(done_.load(std::memory_order_acquire))); //TODO: add gmx_pause
+        wait_until(done_, true);
     }
     /*! \brief
      * Set done status.

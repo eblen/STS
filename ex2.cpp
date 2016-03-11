@@ -43,6 +43,22 @@ void g(int step) {
     parallel_for("TASK_G_1", 0, niters/3, [=](size_t i) {do_something_D("G2", i, step);});
 }
 
+void assign_threads() {
+    clearAssignments();
+
+    assign("TASK_F", 1);
+    assign("TASK_G", 2);
+
+    assign("TASK_F_0", 1, {0, {2,3}});
+
+    assign("TASK_G_0", 2, {0, {1,2}});
+    assign("TASK_G_1", 2, {0, {1,2}});
+
+    assign("TASK_G_0", 0, {{1,2}, 1});
+    assign("TASK_F_0", 0, {{2,3}, 1});
+    assign("TASK_G_1", 0, {{1,2}, 1});
+}
+
 int main(int argc, char **argv)
 {
   const int nthreads = 3;
@@ -58,7 +74,8 @@ int main(int argc, char **argv)
       if(step==3) 
           nextStep();
       */
-      reschedule();
+      assign_threads();
+      nextStep();
       run("TASK_F", [=]{f(step);});
       run("TASK_G", [=]{g(step);});
       wait();

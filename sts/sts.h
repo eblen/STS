@@ -231,7 +231,9 @@ public:
         }
     }
     //! Automatically compute new schedule based on previous step timing
-    void reschedule();
+    void reschedule() {
+        // not yet available
+    }
     //! Wait on all tasks to finish
     void wait() {
         if (!bUseDefaultSchedule_) {

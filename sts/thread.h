@@ -164,9 +164,15 @@ public:
      * Note: This is a static method. Id returned depends on the thread executing
      * not the object. Only use Thread::getID() not t.getId() to avoid confusion.
      *
-     * \returns thread id
+     * \returns thread Id
      */
     static int getId() { return id_; }
+    int getCurrentTaskId() {
+        if (nextSubtaskId_ < 1) {
+            return -1;
+        }
+        return taskQueue_[nextSubtaskId_ - 1].getTaskId();
+    }
     //! Wait for thread to finish all tasks in queue (=step)
     void wait() {
         for(auto &task: taskQueue_) task.wait(); //If we have a task-graph it is sufficient to wait on last parent task. Without graph we need to make sure all are done.

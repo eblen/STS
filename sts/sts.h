@@ -166,7 +166,7 @@ public:
         int id = getTaskId(label);
         assert(range.start>=0 && range.end<=1);
         SubTask const* subtask = threads_.at(threadId).addSubtask(id, range);
-        tasks_[id].subtasks_.push_back(subtask);
+        tasks_[id].pushSubtask(threadId, subtask);
         bUseDefaultSchedule_ = false;
     }
     //! Clear all assignments
@@ -175,7 +175,7 @@ public:
             thread.clearSubtasks();
         }
         for (auto &task : tasks_) {
-            task.subtasks_.clear();
+            task.clearSubtasks();
         }
     }
     //! Notify threads to start computing the next step
@@ -276,6 +276,22 @@ public:
         return func.wait();
     }
     /* \brief
+     * Get thread's id for its current task or -1
+     *
+     * \return thread task id or -1 if no current task
+     */
+    int getThreadTaskId() {
+        int threadId = Thread::getId();
+        int taskId = threads_[threadId].getCurrentTaskId();
+        if (taskId == -1) {
+            return -1;
+        }
+        int ttid = tasks_[taskId].getThreadTaskId(threadId);
+        // Would mean that thread is currently running a task it was never assigned.
+        assert(ttid > -1);
+        return ttid;
+    }
+    /* \brief
      * Load atomic step counter
      *
      * \returns step counter
@@ -302,6 +318,33 @@ private:
         std::vector<SubTask const*> subtasks_;
         //!< The waiting time in the implied barrier at the end of a loop. Zero for basic task.
         sts_clock::duration waitTime_;
+
+        Task() :waitTime_(0), numThreads_(0) {
+            functor_.reset(nullptr);
+        }
+        void pushSubtask(int threadId, SubTask const* t) {
+            subtasks_.push_back(t);
+            if (threadTaskIds_.find(threadId) != threadTaskIds_.end()) {
+                threadTaskIds_[threadId] = numThreads_;
+                numThreads_++;
+            }
+        }
+        void clearSubtasks() {
+            subtasks_.clear();
+            threadTaskIds_.clear();
+            numThreads_ = 0;
+        }
+        int getThreadTaskId(int threadId) {
+            auto id = threadTaskIds_.find(threadId);
+            if (id == threadTaskIds_.end()) {
+                return -1;
+            }
+            return (*id).first;
+        }
+    private:
+        int numThreads_;
+        //! Map global thread id to an id only for this task (task ids are consecutive starting from 0)
+        std::map<int, int> threadTaskIds_;
     };
 
     //Creates new ID for unknown label.

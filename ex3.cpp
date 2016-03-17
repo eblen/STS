@@ -9,7 +9,7 @@ float A[size] = {0};
 float B[size] = {0};
 
 void do_something_A(int i) {
-    static Barrier<nthreads> b;
+    static Barrier b(nthreads);
     A[i] = 1;
     int j = (i + size / nthreads) % size;
     b.enter();

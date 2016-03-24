@@ -4,12 +4,12 @@
 #include <cassert>
 
 #include <atomic>
-#include <chrono>
 #include <deque>
 #include <memory>
 #include <thread>
 
 #include "range.h"
+#include "task.h"
 
 #if (__GNUC__ == 4 && __GNUC_MINOR__ <= 7) || (defined __ICC && __ICC <= 1400)
 #define thread_local __thread
@@ -17,81 +17,6 @@
 #if _MSC_VER == 1800
 #define thread_local __declspec(thread)
 #endif
-
-using sts_clock = std::chrono::steady_clock;
-
-// TODO: Add gmx_pause.
-// TODO: Consider wait_until_not variant that doesn't return a value.
-/*! \brief
- * Wait until atomic variable a is set to value v
- *
- * \param[in] a   atomic variable
- * \param[in] v   value
- */
-template <typename T>
-void wait_until(const std::atomic<T> &a, T v) {
-    while (a.load() != v);
-}
-/*! \brief
- * Wait until atomic variable a is not set to value v
- *
- * \param[in] a   atomic variable
- * \param[in] v   value
- * \returns       new value of a
- */
-template <typename T>
-T wait_until_not(const std::atomic<T> &a, T v) {
-    T v2;
-    do {
-        v2 = a.load();
-    } while(v2 == v);
-    return v2;
-}
-
-/*! \brief
- * The part of a task done by one thread
- *
- * Contains the input to a thread what to do (taskId_, range_) and the output
- * from the thread upon completion of the sub-task (done_, timing).
- * For a loop task the range_ is the subsection done by a thread. A basic
- * task is always completely executed by a single thread.
- */
-class SubTask {
-public:
-    /*! \brief
-     * Constructor
-     *
-     * \param[in] taskId   The ID of the task this is part of.
-     * \param[in] range    Out of a possible range from 0 to 1, the section in
-                           this part. Ignored for basic tasks.
-     */
-    SubTask(int taskId, Range<Ratio> range) : taskId_(taskId), range_(range) {
-        setDone(false);
-    }
-    //! Wait on sub-task to complete
-    void wait() const
-    {
-        wait_until(done_, true);
-    }
-    /*! \brief
-     * Set done status.
-     *
-     * \param[in] done   value
-     */
-    void setDone(bool done)
-    {
-        done_.store(done, std::memory_order_release);
-    }
-    int getTaskId() const { return taskId_; }               //!< get Task Id
-    const Range<Ratio>& getRange() const { return range_; } //!< get Range
-
-    sts_clock::duration waitTime_; /**< Time spent until task was ready */
-    sts_clock::duration runTime_;  /**< Time spent executing sub-task  */
-private:
-    int taskId_;                   /**< The ID of the task this is a part of */
-    Range<Ratio> range_;           /**< Range (out of [0,1]) of loop part */
-    std::atomic_bool done_;        /**< Sub-task is done */
-};
 
 /*! \brief
  * Every thread has one associated object of this type

@@ -11,7 +11,7 @@ void do_something_A(int i) {
 }
 
 void task_f() {
-    TaskReduction<int> tr("TASK_F_0", 0);
+    TaskReduction<int> tr = createTaskReduction("TASK_F_0", 0);
     parallel_for("TASK_F_0", 0, size, [=](size_t i) {do_something_A(i);}, &tr);
     result += tr.getResult();
 }

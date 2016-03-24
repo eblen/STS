@@ -107,5 +107,15 @@ void wait()
     STS::getInstance()->wait();
 }
 
+template<typename T>
+TaskReduction<T> createTaskReduction(std::string taskName, T init) {
+    int numThreads = STS::getInstance()->getTaskNumThreads(taskName);
+    return TaskReduction<T>(taskName, init, numThreads);
+}
+template<typename T>
+void collect(T a) {
+    int ttid = STS::getInstance()->getTaskThreadId();
+    STS::getInstance()->collect(a, ttid);
+}
 
 #endif

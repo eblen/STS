@@ -8,7 +8,6 @@ void Thread::doWork() {
     STS *sts = STS::getInstance();
     for (int i=0; ; i++) {
         int c = sts->waitOnStepCounter(i);
-        resetTaskQueue();
         if (c<0) break; //negative task counter signals to terminate the thread
         processQueue();
     }

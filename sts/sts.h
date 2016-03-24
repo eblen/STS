@@ -184,7 +184,9 @@ public:
         for (auto &task: tasks_) {
             task.functor_.reset(nullptr);
         }
-        threads_[0].resetTaskQueue();
+        for (int i=0; i<threads_.size(); i++) {
+            threads_[i].resetTaskQueue();
+        }
         stepCounter_.fetch_add(1, std::memory_order_release);
     }
     /*! \brief

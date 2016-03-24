@@ -38,10 +38,10 @@
  * \param[in] end      The end index of the loop
  * \param[in] body     The function (or lambda) to execute as loop body
  */
-template<typename F>
-void parallel_for(std::string l, int64_t start, int64_t end, F f)
+template<typename F, typename T = int>
+void parallel_for(std::string l, int64_t start, int64_t end, F f, TaskReduction<T> *r = nullptr)
 {
-    STS::getInstance()->parallel_for(l, start, end, f);
+    STS::getInstance()->parallel_for(l, start, end, f, r);
 }
 
 /*! \brief

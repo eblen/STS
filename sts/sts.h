@@ -14,6 +14,9 @@
 #include "range.h"
 #include "thread.h"
 
+template<typename T>
+class TaskReduction;
+
 //! Interface of the executable function of a task
 class ITaskFunctor {
 public:
@@ -169,6 +172,21 @@ public:
         tasks_[id].pushSubtask(threadId, subtask);
         bUseDefaultSchedule_ = false;
     }
+    /* \brief
+     * Collect the given value for the current task for later reduction
+     *
+     * \param[in] value to collect
+     */
+    template<typename T>
+    void collect(T a) {
+        const Task *t = getCurrentTask();
+        // TODO: This is a user error - calling collect outside of a task.
+        // Currently, we simply ignore the call. How should it be handled?
+        if (t == nullptr) {
+            return;
+        }
+        (static_cast<TaskReduction<T> *>(t->reduction_))->collect(a);
+    }
     //! Clear all assignments
     void clearAssignments() {
         for (auto &thread : threads_) {
@@ -210,9 +228,10 @@ public:
      * \param[in] start    The start index of the loop
      * \param[in] end      The end index of the loop
      * \param[in] body     The function (or lambda) to execute as loop body
+     * \param[in] red      Optional reduction
      */
-    template<typename F>
-    void parallel_for(std::string label, int64_t start, int64_t end, F body) {
+    template<typename F, typename T=int>
+    void parallel_for(std::string label, int64_t start, int64_t end, F body, TaskReduction<T> *red = nullptr) {
         int taskId = 0;
         if (bUseDefaultSchedule_) {
             nextStep(); //Default schedule has only a single step and the user doesn't need to call nextStep
@@ -221,6 +240,7 @@ public:
             taskId = getTaskId(label);
         }
         auto &task = tasks_[taskId];
+        task.reduction_ = red;
         task.functor_.reset(new LoopTaskFunctor<F>(body, {start, end}));
         auto &thread = threads_[Thread::getId()];
         //Calling processTask implies that the thread calling parallel_for participates in the loop and executes it next in queue
@@ -231,6 +251,13 @@ public:
             s->wait();
         }
         task.waitTime_ = sts_clock::now() - startWaitTime;
+
+        // TODO: A smarter reduction would take place before the above wait.
+        if (task.reduction_ != nullptr) {
+            auto startReductionTime = sts_clock::now();
+            static_cast< TaskReduction<T> *>(task.reduction_)->reduce();
+            task.reductionTime_ = sts_clock::now() - startReductionTime;
+        }
     }
     //! Automatically compute new schedule based on previous step timing
     void reschedule() {
@@ -278,17 +305,39 @@ public:
         return func.wait();
     }
     /* \brief
+     * Get number of threads for current task or 0 if no current task
+     *
+     * \return number of threads or 0 if no current task
+     */
+    int getTaskNumThreads() {
+        const Task *t = getCurrentTask();
+        if (t == nullptr) {
+            return 0;
+        }
+        return t->getNumThreads();
+    }
+    /* \brief
+     * Get number of threads for a given task
+     *
+     * \return number of threads
+     */
+    int getTaskNumThreads(std::string label) {
+        // TODO: Handle case where label is not a valid task.
+        // Currently, it will insert a new task!
+        int taskId = getTaskId(label);
+        return tasks_[taskId].getNumThreads();
+    }
+    /* \brief
      * Get thread's id for its current task or -1
      *
      * \return thread task id or -1 if no current task
      */
-    int getThreadTaskId() {
-        int threadId = Thread::getId();
-        int taskId = threads_[threadId].getCurrentTaskId();
-        if (taskId == -1) {
+    int getTaskThreadId() {
+        const Task *t = getCurrentTask();
+        if (t == nullptr) {
             return -1;
         }
-        int ttid = tasks_[taskId].getThreadTaskId(threadId);
+        int ttid = t->getThreadId(Thread::getId());
         // Would mean that thread is currently running a task it was never assigned.
         assert(ttid > -1);
         return ttid;
@@ -316,17 +365,19 @@ private:
      */
     struct Task {
         AtomicPtr<ITaskFunctor> functor_;      //!< The function/loop to execute
+        void *reduction_;
         //! All subtasks of this task. One for each section of a loop. One for a basic task.
         std::vector<SubTask const*> subtasks_;
         //!< The waiting time in the implied barrier at the end of a loop. Zero for basic task.
         sts_clock::duration waitTime_;
+        sts_clock::duration reductionTime_;
 
-        Task() :waitTime_(0), numThreads_(0) {
+        Task() :reduction_(nullptr), waitTime_(0), reductionTime_(0), numThreads_(0) {
             functor_.reset(nullptr);
         }
         void pushSubtask(int threadId, SubTask const* t) {
             subtasks_.push_back(t);
-            if (threadTaskIds_.find(threadId) != threadTaskIds_.end()) {
+            if (threadTaskIds_.find(threadId) == threadTaskIds_.end()) {
                 threadTaskIds_[threadId] = numThreads_;
                 numThreads_++;
             }
@@ -336,7 +387,10 @@ private:
             threadTaskIds_.clear();
             numThreads_ = 0;
         }
-        int getThreadTaskId(int threadId) {
+        int getNumThreads() const {
+            return numThreads_;
+        }
+        int getThreadId(int threadId) const {
             auto id = threadTaskIds_.find(threadId);
             if (id == threadTaskIds_.end()) {
                 return -1;
@@ -348,7 +402,15 @@ private:
         //! Map global thread id to an id only for this task (task ids are consecutive starting from 0)
         std::map<int, int> threadTaskIds_;
     };
-
+    // Helper function for operations that need the current task
+    const Task *getCurrentTask() {
+        int threadId = Thread::getId();
+        int taskId = threads_[threadId].getCurrentTaskId();
+        if (taskId == -1) {
+            return nullptr;
+        }
+        return &tasks_[taskId];
+    }
     //Creates new ID for unknown label.
     //Creating IDs isn't thread safe. OK because assignments and run/parallel_for (if run without pre-assignment) are executed by master thread while other threads wait on nextStep.
     int getTaskId(std::string label) {
@@ -384,5 +446,56 @@ private:
     bool bSTSDebug_ = true;
     std::atomic<int> stepCounter_;
 };
+
+/*!
+ * Reduction class and implementation for basic data types
+ *
+ * Implement reductions for other types with template specialization
+ *
+ * These classes are meant to be passed into parallel_for loops.
+ * Threads should call collect to contribute their value, and later
+ * STS automatically calls reduce at the end of the parallel_for.
+ * The thread that invoked the parallel_for can then call getResult()
+ * to get the final result.
+ *
+ * This class is thread safe when used "normally." Threads should only
+ * call collect without the pos argument, so each thread has a unique
+ * slot. Then reduce should only be called once after all threads
+ * complete (done automatically at the end of parallel_for).
+ *
+ * Custom implementations should be careful to ensure thread safety.
+ */
+template<typename T>
+class TaskReduction {
+public:
+    TaskReduction(std::string taskName, T init) :result(init) {
+        values.resize(STS::getInstance()->getTaskNumThreads(taskName), init);
+    }
+    void collect(T a) {
+        int ttid = STS::getInstance()->getTaskThreadId();
+        assert(ttid > -1);
+        collect(a, ttid);
+    }
+    void collect(T a, size_t pos) {
+        values[pos] += a;
+    }
+    // TODO: Allow user to provide a custom reduction function
+    void reduce() {
+        for (const T &i : values) {
+            result += i;
+        }
+    }
+    T getResult() {
+        return result;
+    }
+private:
+    std::vector<T> values;
+    T result;
+};
+
+template<typename T>
+void collect(T a) {
+    STS::getInstance()->collect(a);
+}
 
 #endif // STS_STS_H

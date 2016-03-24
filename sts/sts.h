@@ -224,11 +224,11 @@ public:
         //Calling processTask implies that the thread calling parallel_for participates in the loop and executes it next in queue
         assert(thread.getNextSubtask()->getTaskId()==taskId);
         thread.processTask();
+        auto startWaitTime = sts_clock::now();
         for(auto s: task.subtasks_) {
-            auto startWaitTime = sts_clock::now();
             s->wait();
-            task.waitTime_ = sts_clock::now() - startWaitTime;
         }
+        task.waitTime_ = sts_clock::now() - startWaitTime;
     }
     //! Automatically compute new schedule based on previous step timing
     void reschedule() {

@@ -6,18 +6,19 @@
 /*!
  * Reduction class and implementation for basic data types
  *
- * Implement reductions for other types with template specialization
+ * Use template specialization to implement reductions for other
+ * types.
  *
  * These classes are meant to be passed into parallel_for loops.
- * Threads should call collect to contribute their value, and later
- * STS automatically calls reduce at the end of the parallel_for.
- * The thread that invoked the parallel_for can then call getResult()
- * to get the final result.
+ * Threads should call collect to contribute values. STS calls reduce
+ * at the end of the parallel_for to combine all of the contributed
+ * values. Afterwards, call getResult() to read the final result.
  *
- * This class is thread safe when used "normally." Threads should only
- * call collect without the pos argument, so each thread has a unique
- * slot. Then reduce should only be called once after all threads
- * complete (done automatically at the end of parallel_for).
+ * This class is thread safe when used through the interface provided
+ * in "sts.h" rather than when used directly. This interface gives
+ * each thread a unique slot for contributing values, and reduce is
+ * only called by the main thread after the parallel_for ends and not
+ * by the user.
  *
  * Custom implementations should be careful to ensure thread safety.
  */

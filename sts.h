@@ -107,11 +107,23 @@ void wait()
     STS::getInstance()->wait();
 }
 
+/*! \brief
+ * Create a TaskReduction object
+ *
+ * \param[in] taskName  Name of task to which reduction applies
+ * \param[in] init      Initial value
+ */
 template<typename T>
 TaskReduction<T> createTaskReduction(std::string taskName, T init) {
     int numThreads = STS::getInstance()->getTaskNumThreads(taskName);
     return TaskReduction<T>(taskName, init, numThreads);
 }
+
+/*! \brief
+ * Collect a value for a task's reduction. Must be called within a task.
+ *
+ * \param[in] a Value to be collected
+ */
 template<typename T>
 void collect(T a) {
     int ttid = STS::getInstance()->getTaskThreadId();

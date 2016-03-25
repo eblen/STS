@@ -145,7 +145,7 @@ private:
  *
  * Can either be a function or loop. Depending on the schedule is
  * executed synchronous or asynchronous. Functions are always
- * executed by a single threads. Loops are executed, depending on
+ * executed by a single thread. Loops are executed, depending on
  * the schedule, in serial or in parallel.
  */
 struct Task {

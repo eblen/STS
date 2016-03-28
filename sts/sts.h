@@ -80,7 +80,14 @@ public:
         if (bUseDefaultSchedule_) {
             function();
         } else {
-            tasks_[getTaskId(label)].functor_.reset(new BasicTaskFunctor<F>(function));
+            if (isMainThread()) {
+                tasks_[getTaskId(label)].functor_.reset(new BasicTaskFunctor<F>(function));
+            }
+            int taskId = getTaskId(label);
+            auto &thread = threads_[Thread::getId()];
+            if (thread.getNextSubtask()->getTaskId()==taskId) {
+                thread.processTask();
+            }
         }
     }
     /*! \brief
@@ -102,23 +109,27 @@ public:
             taskId = getTaskId(label);
         }
         auto &task = tasks_[taskId];
-        task.reduction_ = red;
-        task.functor_.reset(new LoopTaskFunctor<F>(body, {start, end}));
         auto &thread = threads_[Thread::getId()];
+        if (isMainThread()) {
+            task.reduction_ = red;
+            task.functor_.reset(new LoopTaskFunctor<F>(body, {start, end}));
+        }
         //Calling processTask implies that the thread calling parallel_for participates in the loop and executes it next in queue
         assert(thread.getNextSubtask()->getTaskId()==taskId);
         thread.processTask();
-        auto startWaitTime = sts_clock::now();
-        for(auto s: task.subtasks_) {
-            s->wait();
-        }
-        task.waitTime_ = sts_clock::now() - startWaitTime;
+        if (isMainThread()) {
+            auto startWaitTime = sts_clock::now();
+            for(auto s: task.subtasks_) {
+                s->wait();
+            }
+            task.waitTime_ = sts_clock::now() - startWaitTime;
 
-        // TODO: A smarter reduction would take place before the above wait.
-        if (task.reduction_ != nullptr) {
-            auto startReductionTime = sts_clock::now();
-            static_cast< TaskReduction<T> *>(task.reduction_)->reduce();
-            task.reductionTime_ = sts_clock::now() - startReductionTime;
+            // TODO: A smarter reduction would take place before the above wait.
+            if (task.reduction_ != nullptr) {
+                auto startReductionTime = sts_clock::now();
+                static_cast< TaskReduction<T> *>(task.reduction_)->reduce();
+                task.reductionTime_ = sts_clock::now() - startReductionTime;
+            }
         }
     }
     //! Automatically compute new schedule based on previous step timing
@@ -170,6 +181,12 @@ public:
      * param[in] c   last step processed by thread
      */
     int waitOnStepCounter(int c);
+    /* \brief
+     * Is the current thread the main thread for the current task?
+     *
+     * \return  whether current thread is the main thread.
+     */
+    bool isMainThread();
 private:
     // Helper function for operations that need the current task
     const Task *getCurrentTask();

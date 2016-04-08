@@ -68,24 +68,28 @@ void run(std::string l, F f)
  * \param[in] threadId The Id of the thread to assign to
  * \param[in] range    The range for a loop task to assign. Ignored for basic task.
  */
+inline
 void assign(std::string label, int threadId, Range<Ratio> range = Range<Ratio>(1))
 {
     STS::getInstance()->assign(label, threadId, range);
 }
 
 //! Clear all thread assignments
+inline
 void clearAssignments()
 {
     STS::getInstance()->clearAssignments();
 }
 
 //! Notify threads to start computing the next step
+inline
 void nextStep()
 {
     STS::getInstance()->nextStep();
 }
 
 //! Automatically compute new schedule based on previous step timing
+inline
 void reschedule()
 {
     STS::getInstance()->reschedule();
@@ -96,12 +100,14 @@ void reschedule()
  *
  * \param[in] n number of threads to use (including OS thread)
  */
+inline
 void setNumThreads(int n)
 {
     STS::getInstance()->setNumThreads(n);
 }
 
 //! Wait on all tasks to finish
+inline
 void wait()
 {
     STS::getInstance()->wait();

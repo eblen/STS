@@ -128,13 +128,6 @@ int STS::loadStepCounter() { return stepCounter_.load(std::memory_order_acquire)
 
 int STS::waitOnStepCounter(int c) {return wait_until_not(stepCounter_, c);}
 
-bool STS::isMainThread() {
-    // Thread is the main thread if either:
-    // 1) There is no current task (getTaskThreadId() == -1)
-    // 2) Thread has task thread id of 0 for the current task.
-    return (getTaskThreadId() < 1);
-}
-
 const Task *STS::getCurrentTask() {
     int threadId = Thread::getId();
     int taskId = threads_[threadId].getCurrentTaskId();

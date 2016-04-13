@@ -1,8 +1,22 @@
+#include <sched.h>
+
 #include "thread.h"
 
 #include "sts.h"
 
 int thread_local Thread::id_ = 0;
+
+void Thread::setAffinity(int coreId) {
+    cpu_set_t mask;
+    int status;
+
+    CPU_ZERO(&mask);
+    CPU_SET(coreId, &mask);
+    if (sched_setaffinity(0, sizeof(mask), &mask) != 0)
+    {
+        perror("sched_setaffinity");
+    }
+}
 
 void Thread::doWork() {
     STS *sts = STS::getInstance();

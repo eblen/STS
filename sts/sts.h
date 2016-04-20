@@ -1,10 +1,15 @@
 #ifndef STS_STS_H
 #define STS_STS_H
 
+#include <cassert>
+
 #include <atomic>
 #include <deque>
 #include <map>
 #include <string>
+#include <chrono>
+#include <iostream>
+#include <memory>
 
 #include "range.h"
 #include "reduce.h"
@@ -29,14 +34,38 @@ public:
     /*! \brief
      * Constructor
      */
-    STS();
-    ~STS();
+    STS() {
+        stepCounter_.store(0, std::memory_order_release);
+        threads_.emplace_back(0);
+    }
+    ~STS() {
+        //-1 notifies threads to finish
+        stepCounter_.store(-1, std::memory_order_release);
+        for(unsigned int i=1;i<threads_.size();i++) {
+            threads_[i].join();
+        }
+    }
     /*! \brief
      * Set number of threads in the pool
      *
      * \param[in] n number of threads to use (including OS thread)
      */
-    void setNumThreads(int n);
+    void setNumThreads(int n) {
+        for (int id = threads_.size(); id < n; id++) {
+            threads_.emplace_back(id); //create threads
+        }
+        for (int id = threads_.size(); id > n; id--) {
+            threads_.pop_back();
+        }
+        if (bUseDefaultSchedule_) {
+            clearAssignments();
+            for (int id = 0; id < n; id++) {
+                assign("default", id, {{id,     n},
+                        {id + 1, n}});
+            }
+            bUseDefaultSchedule_ = true;
+        }
+    }
     /*! \brief
      * Assign task to a thread
      *
@@ -49,7 +78,13 @@ public:
      * \param[in] threadId The Id of the thread to assign to
      * \param[in] range    The range for a loop task to assing. Ignored for basic task.
      */
-    void assign(std::string label, int threadId, Range<Ratio> range = Range<Ratio>(1));
+    void assign(std::string label, int threadId, Range<Ratio> range) {
+        int id = getTaskId(label);
+        assert(range.start>=0 && range.end<=1);
+        SubTask const* subtask = threads_.at(threadId).addSubtask(id, range);
+        tasks_[id].pushSubtask(threadId, subtask);
+        bUseDefaultSchedule_ = false;
+    }
     /* \brief
      * Collect the given value for the current task for later reduction
      *
@@ -66,9 +101,25 @@ public:
         (static_cast<TaskReduction<T> *>(t->reduction_))->collect(a, ttid);
     }
     //! Clear all assignments
-    void clearAssignments();
+    void clearAssignments() {
+        for (auto &thread : threads_) {
+            thread.clearSubtasks();
+        }
+        for (auto &task : tasks_) {
+            task.clearSubtasks();
+        }
+    }
     //! Notify threads to start computing the next step
-    void nextStep();
+    void nextStep() {
+        assert(Thread::getId()==0);
+        for (auto &task: tasks_) {
+            task.functor_.reset(nullptr);
+        }
+        for (int i=0; i<threads_.size(); i++) {
+            threads_[i].resetTaskQueue();
+        }
+        stepCounter_.fetch_add(1, std::memory_order_release);
+    }
     /*! \brief
      * Run an asynchronous function
      *
@@ -122,9 +173,32 @@ public:
         }
     }
     //! Automatically compute new schedule based on previous step timing
-    void reschedule();
+    void reschedule() {
+        // not yet available
+    }
     //! Wait on all tasks to finish
-    void wait();
+    void wait() {
+        if (!bUseDefaultSchedule_) {
+            threads_[0].processQueue(); //Before waiting the OS thread executes its queue
+            for(unsigned int i=1;i<threads_.size();i++) {
+                threads_[i].wait();
+            }
+            if (bSTSDebug_) {
+                std::cerr << "Times for step " << loadStepCounter() << std::endl;
+                for (const auto &t : tasks_) {
+                    for (const auto &st : t.subtasks_) {
+                        auto wtime = std::chrono::duration_cast<std::chrono::microseconds>(st->waitTime_).count();
+                        auto rtime = std::chrono::duration_cast<std::chrono::microseconds>(st->runTime_).count();
+                        std::cerr << getTaskLabel(st->getTaskId()) << " " << wtime << " " << rtime << std::endl;
+                    }
+                    if (t.subtasks_.size() > 1) {
+                        auto ltwtime = std::chrono::duration_cast<std::chrono::microseconds>(t.waitTime_).count();
+                        std::cerr << "Wait for task to complete " << ltwtime << std::endl;
+                    }
+                }
+            }
+        }
+    }
     /*! \brief
      * Returns the STS instance
      *
@@ -139,50 +213,97 @@ public:
      * \param[in] task Id
      * \returns task functor
      */
-    ITaskFunctor *getTaskFunctor(int taskId);
+    ITaskFunctor *getTaskFunctor(int taskId) {
+        auto &func = tasks_[taskId].functor_;
+        return func.wait();
+    }
     /* \brief
      * Get number of threads for current task or 0 if no current task
      *
      * \return number of threads or 0 if no current task
      */
-    int getTaskNumThreads();
+    int getTaskNumThreads() {
+        const Task *t = getCurrentTask();
+        if (t == nullptr) {
+            return 0;
+        }
+        return t->getNumThreads();
+    }
     /* \brief
      * Get number of threads for a given task
      *
      * \return number of threads
      */
-    int getTaskNumThreads(std::string label);
+    int getTaskNumThreads(std::string label) {
+        // TODO: Handle case where label is not a valid task.
+        // Currently, it will insert a new task!
+        int taskId = getTaskId(label);
+        return tasks_[taskId].getNumThreads();
+    }
     /* \brief
      * Get thread's id for its current task or -1
      *
      * \return thread task id or -1 if no current task
      */
-    int getTaskThreadId();
+    int getTaskThreadId() {
+        const Task *t = getCurrentTask();
+        if (t == nullptr) {
+            return -1;
+        }
+        int ttid = t->getThreadId(Thread::getId());
+        // Would mean that thread is currently running a task it was never assigned.
+        assert(ttid > -1);
+        return ttid;
+    }
     /* \brief
      * Load atomic step counter
      *
      * \returns step counter
      */
-    int loadStepCounter();
+    int loadStepCounter() { return stepCounter_.load(std::memory_order_acquire); }
     /* \brief
      * Wait on atomic step counter to change
      *
      * param[in] c   last step processed by thread
      */
-    int waitOnStepCounter(int c);
+    int waitOnStepCounter(int c) {return wait_until_not(stepCounter_, c);}
 private:
     // Helper function for operations that need the current task
-    const Task *getCurrentTask();
+    const Task *getCurrentTask() {
+        int threadId = Thread::getId();
+        int taskId = threads_[threadId].getCurrentTaskId();
+        if (taskId == -1) {
+            return nullptr;
+        }
+        return &tasks_[taskId];
+    }
     //Creates new ID for unknown label.
     //Creating IDs isn't thread safe. OK because assignments and run/parallel_for (if run without pre-assignment) are executed by master thread while other threads wait on nextStep.
-    int getTaskId(std::string label);
+    int getTaskId(std::string label) {
+        auto it = taskLabels_.find(label);
+        if (it != taskLabels_.end()) {
+            return it->second;
+        } else {
+            assert(Thread::getId()==0); //creating thread should only be done by master thread
+            unsigned int v = taskLabels_.size();
+            assert(v==tasks_.size());
+            tasks_.resize(v+1);
+            taskLabels_[label] = v;
+            return v;
+        }
+    }
     /*! \brief
      * Returns task label for task ID
      *
      * \param[in] id   task Id
      * \returns        task label
      */
-    std::string getTaskLabel(int id) const;
+    std::string getTaskLabel(int id) const {
+        for (auto it: taskLabels_) {
+            if (it.second == id) return it.first;
+        }
+        throw std::invalid_argument("Invalid task Id: "+id);
+    }
 
     std::deque<Task>  tasks_;  //It is essential this isn't a vector (doesn't get moved when resizing). Is this ok to be a list (linear) or does it need to be a tree? A serial task isn't before a loop. It is both before and after.
     std::map<std::string,int> taskLabels_;

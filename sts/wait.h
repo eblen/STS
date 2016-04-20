@@ -16,8 +16,8 @@
  * \param[in] a   atomic variable
  * \param[in] v   value
  */
-template <typename T>
-void wait_until(const std::atomic<T> &a, T v) {
+template <typename A, typename T>
+void wait_until(const A &a, T v) {
     while (a.load() != v);
 }
 /*! \brief
@@ -27,8 +27,8 @@ void wait_until(const std::atomic<T> &a, T v) {
  * \param[in] v   value
  * \returns       new value of a
  */
-template <typename T>
-T wait_until_not(const std::atomic<T> &a, T v) {
+template <typename A, typename T>
+T wait_until_not(const A &a, T v) {
     T v2;
     do {
         v2 = a.load();

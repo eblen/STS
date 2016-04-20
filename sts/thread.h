@@ -14,7 +14,7 @@
 #if (__GNUC__ == 4 && __GNUC_MINOR__ <= 7) || (defined __ICC && __ICC <= 1400)
 #define thread_local __thread
 #endif
-#if _MSC_VER == 1800
+#if defined _MSC_VER && _MSC_VER == 1800
 #define thread_local __declspec(thread)
 #endif
 

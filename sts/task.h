@@ -6,6 +6,7 @@
 #include <map>
 #include <vector>
 
+#include "range.h"
 #include "wait.h"
 
 using sts_clock = std::chrono::steady_clock;

@@ -80,7 +80,6 @@ public:
      */
     void resetTaskQueue() {
         if (!thread_) nextSubtaskId_ = 0;
-        for (auto &s: taskQueue_) s.setDone(false);
     }
     //! Wait for thread to finish
     void join() { if (thread_) thread_->join(); }
@@ -98,10 +97,6 @@ public:
             return -1;
         }
         return taskQueue_[nextSubtaskId_ - 1].getTaskId();
-    }
-    //! Wait for thread to finish all tasks in queue (=step)
-    void wait() {
-        for(auto &task: taskQueue_) task.wait(); //If we have a task-graph it is sufficient to wait on last parent task. Without graph we need to make sure all are done.
     }
 private:
     void doWork(); //function executed by worker threads

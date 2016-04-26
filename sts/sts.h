@@ -113,7 +113,9 @@ public:
     void nextStep() {
         assert(Thread::getId()==0);
         for (auto &task: tasks_) {
-            task.functor_.reset(nullptr);
+            task.functor_ = nullptr;
+            task.functorBeginBarrier_.close();
+            task.functorEndBarrier_.close(task.getNumThreads());
         }
         for (int i=0; i<threads_.size(); i++) {
             threads_[i].resetTaskQueue();
@@ -131,7 +133,8 @@ public:
         if (bUseDefaultSchedule_) {
             function();
         } else {
-            tasks_[getTaskId(label)].functor_.reset(new BasicTaskFunctor<F>(function));
+            tasks_[getTaskId(label)].functor_ = new BasicTaskFunctor<F>(function);
+            tasks_[getTaskId(label)].functorBeginBarrier_.open();
         }
     }
     /*! \brief
@@ -154,15 +157,14 @@ public:
         }
         auto &task = tasks_[taskId];
         task.reduction_ = red;
-        task.functor_.reset(new LoopTaskFunctor<F>(body, {start, end}));
+        task.functor_ = new LoopTaskFunctor<F>(body, {start, end});
+        task.functorBeginBarrier_.open();
         auto &thread = threads_[Thread::getId()];
         //Calling processTask implies that the thread calling parallel_for participates in the loop and executes it next in queue
         assert(thread.getNextSubtask()->getTaskId()==taskId);
         thread.processTask();
         auto startWaitTime = sts_clock::now();
-        for(auto s: task.subtasks_) {
-            s->wait();
-        }
+        task.functorEndBarrier_.wait();
         task.waitTime_ = sts_clock::now() - startWaitTime;
 
         // TODO: A smarter reduction would take place before the above wait.
@@ -180,8 +182,8 @@ public:
     void wait() {
         if (!bUseDefaultSchedule_) {
             threads_[0].processQueue(); //Before waiting the OS thread executes its queue
-            for(unsigned int i=1;i<threads_.size();i++) {
-                threads_[i].wait();
+            for(unsigned int i=1;i<tasks_.size();i++) {
+                tasks_[i].functorEndBarrier_.wait();
             }
             if (bSTSDebug_) {
                 std::cerr << "Times for step " << loadStepCounter() << std::endl;
@@ -214,8 +216,11 @@ public:
      * \returns task functor
      */
     ITaskFunctor *getTaskFunctor(int taskId) {
-        auto &func = tasks_[taskId].functor_;
-        return func.wait();
+        tasks_[taskId].functorBeginBarrier_.wait();
+        return tasks_[taskId].functor_;
+    }
+    void markSubtaskComplete(int taskId) {
+        tasks_[taskId].functorEndBarrier_.markArrival();
     }
     /* \brief
      * Get number of threads for current task or 0 if no current task

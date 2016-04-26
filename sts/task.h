@@ -1,13 +1,12 @@
 #ifndef STS_TASK_H
 #define STS_TASK_H
 
-#include <atomic>
 #include <chrono>
 #include <map>
 #include <vector>
 
 #include "range.h"
-#include "wait.h"
+#include "barrier.h"
 
 using sts_clock = std::chrono::steady_clock;
 
@@ -62,40 +61,6 @@ private:
     F func_;
 };
 
-//! Atomic scoped_ptr like smart pointer
-template<class T>
-class AtomicPtr {
-public:
-    AtomicPtr() { ptr_.store(nullptr, std::memory_order_release); }
-    ~AtomicPtr() {
-        T* p = get();
-        if(p) delete p;
-    }
-    /*! \brief
-     * Deletes the previous object and stores new pointer
-     *
-     * \param[in] t   pointer to store
-     */
-    void reset(T* t) {
-        T* o = ptr_.exchange(t, std::memory_order_release);
-        if(o) delete o;
-    }
-    /*! \brief
-     * Returns the stored pointer
-     *
-     * \returns pointer
-     */
-    T* get() { return ptr_.load(std::memory_order_consume); }
-    /*! \brief
-     * Wait for pointer to be set (non-null)
-     *
-     * \returns pointer
-     */
-    T* wait() { return wait_until_not(ptr_, static_cast<T*>(nullptr)); }
-private:
-    std::atomic<T*> ptr_;
-};
-
 /*! \brief
  * The part of a task done by one thread
  *
@@ -113,23 +78,7 @@ public:
      * \param[in] range    Out of a possible range from 0 to 1, the section in
                            this part. Ignored for basic tasks.
      */
-    SubTask(int taskId, Range<Ratio> range) : taskId_(taskId), range_(range) {
-        setDone(false);
-    }
-    //! Wait on sub-task to complete
-    void wait() const
-    {
-        wait_until(done_, true);
-    }
-    /*! \brief
-     * Set done status.
-     *
-     * \param[in] done   value
-     */
-    void setDone(bool done)
-    {
-        done_.store(done, std::memory_order_release);
-    }
+    SubTask(int taskId, Range<Ratio> range) : taskId_(taskId), range_(range) {}
     int getTaskId() const { return taskId_; }               //!< get Task Id
     const Range<Ratio>& getRange() const { return range_; } //!< get Range
 
@@ -138,7 +87,6 @@ public:
 private:
     int taskId_;                   /**< The ID of the task this is a part of */
     Range<Ratio> range_;           /**< Range (out of [0,1]) of loop part */
-    std::atomic_bool done_;        /**< Sub-task is done */
 };
 
 /*! \brief
@@ -150,17 +98,17 @@ private:
  * the schedule, in serial or in parallel.
  */
 struct Task {
-    AtomicPtr<ITaskFunctor> functor_;      //!< The function/loop to execute
     void *reduction_;
+    ITaskFunctor *functor_;      //!< The function/loop to execute
+    MOBarrier functorBeginBarrier_;
+    OMBarrier functorEndBarrier_;
     //! All subtasks of this task. One for each section of a loop. One for a basic task.
     std::vector<SubTask const*> subtasks_;
     //!< The waiting time in the implied barrier at the end of a loop. Zero for basic task.
     sts_clock::duration waitTime_;
     sts_clock::duration reductionTime_;
 
-    Task() :reduction_(nullptr), waitTime_(0), reductionTime_(0), numThreads_(0) {
-        functor_.reset(nullptr);
-    }
+    Task() :reduction_(nullptr), waitTime_(0), reductionTime_(0), functor_(nullptr), numThreads_(0) {}
     void pushSubtask(int threadId, SubTask const* t) {
         subtasks_.push_back(t);
         if (threadTaskIds_.find(threadId) == threadTaskIds_.end()) {

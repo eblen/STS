@@ -43,6 +43,6 @@ void Thread::processTask() {
     subtask.waitTime_ = startTaskTime - startWaitTime;
     task->run(subtask.getRange());
     subtask.runTime_ = sts_clock::now() - startTaskTime;
-    subtask.setDone(true);
+    STS::getInstance()->markSubtaskComplete(subtask.getTaskId());
 }
 

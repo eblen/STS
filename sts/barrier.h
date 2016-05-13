@@ -2,9 +2,12 @@
 #define STS_BARRIER_H
 
 #include <cassert>
+#include <cmath>
 
 #include <atomic>
 #include <deque>
+
+#include "functions.h"
 
 /*
  * Functions for spin waiting
@@ -92,15 +95,17 @@ private:
     std::atomic_int numThreadsRemaining;
 };
 
+// TODO: Make configurable
+static const int branchFactor = 2;
+
 class MOHyperBarrier {
 public:
-    // TODO: Make configurable
-    static const int branchFactor = 2;
-
-    MOHyperBarrier(int numThreads) :nthreads(numThreads) {
-        for (int level = 0, levelLocks =  1; levelLocks <= nthreads / branchFactor;
-                 level++,   levelLocks *= branchFactor) {
-            locks.push_back(std::deque< std::atomic_bool >(levelLocks));
+    MOHyperBarrier(int numThreads) :real_nthreads(numThreads),
+                                    nthreads(nextpow2(std::max(branchFactor, numThreads))) {
+        // TODO: Prune tree using real nthreads count
+        for (int level = 0, numLocks =  1; numLocks <= nthreads / branchFactor;
+                 level++,   numLocks *= branchFactor) {
+            locks.push_back(std::deque< std::atomic_bool >(numLocks));
             // Cannot initialize in previous line due to lack of copy constructor for atomics
             for (int j=0; j<locks[level].size(); j++) {
                 locks[level][j].store(true);
@@ -129,22 +134,26 @@ public:
         }
     }
 private:
+    const int real_nthreads;
     const int nthreads;
     std::deque< std::deque< std::atomic_bool > > locks;
 };
 
 class OMHyperBarrier {
 public:
-    // TODO: Make configurable
-    static const int branchFactor = 2;
-
-    OMHyperBarrier(int numThreads) {
-        for (int level = 0, levelLocks = numThreads / branchFactor; levelLocks >= 1;
-                 level++,   levelLocks /= branchFactor) {
-            locks.push_back(std::deque< std::atomic_int >(levelLocks));
+    OMHyperBarrier(int numThreads) :real_nthreads(numThreads),
+                                    nthreads(nextpow2(std::max(branchFactor, numThreads))) {
+        for (int level = 0, skip = branchFactor; skip <= nthreads;
+                 level++,   skip *= branchFactor) {
+            int numLocks = std::ceil(real_nthreads / (double)skip);
+            locks.push_back(std::deque< std::atomic_int >(numLocks));
             // Cannot initialize in previous line due to lack of copy constructor for atomics
             for (int j=0; j<locks[level].size(); j++) {
-                locks[level][j].store(branchFactor-1);
+                // TODO: Avoid locks initialized to zero
+                int prevSkip = skip / branchFactor;
+                int remChildren = std::ceil(real_nthreads/ (double)prevSkip) - j * branchFactor - 1;
+                int numChildren = std::min(branchFactor-1, remChildren);
+                locks[level][j].store(numChildren);
             }
         }
     }
@@ -163,6 +172,8 @@ public:
         }
     }
 private:
+    const int real_nthreads;
+    const int nthreads;
     std::deque< std::deque< std::atomic_int > > locks;
 };
 

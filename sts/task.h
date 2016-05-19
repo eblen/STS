@@ -100,21 +100,28 @@ private:
 struct Task {
     void *reduction_;
     ITaskFunctor *functor_;      //!< The function/loop to execute
-    MOBarrier functorBeginBarrier_;
-    OMBarrier functorEndBarrier_;
+    MOHyperBarrier *functorBeginBarrier_;
+    OMHyperBarrier *functorEndBarrier_;
     //! All subtasks of this task. One for each section of a loop. One for a basic task.
     std::vector<SubTask const*> subtasks_;
     //!< The waiting time in the implied barrier at the end of a loop. Zero for basic task.
     sts_clock::duration waitTime_;
     sts_clock::duration reductionTime_;
 
-    Task() :reduction_(nullptr), waitTime_(0), reductionTime_(0), functor_(nullptr), numThreads_(0) {}
+    Task() :reduction_(nullptr), waitTime_(0), reductionTime_(0), functor_(nullptr),
+            functorBeginBarrier_(nullptr), functorEndBarrier_(nullptr), numThreads_(0) {}
     void pushSubtask(int threadId, SubTask const* t) {
         subtasks_.push_back(t);
         if (threadTaskIds_.find(threadId) == threadTaskIds_.end()) {
             threadTaskIds_[threadId] = numThreads_;
             numThreads_++;
         }
+    }
+    void createBarriers() {
+        delete functorBeginBarrier_;
+        delete functorEndBarrier_;
+        functorBeginBarrier_ = new MOHyperBarrier(numThreads_);
+        functorEndBarrier_   = new OMHyperBarrier(numThreads_);
     }
     void clearSubtasks() {
         subtasks_.clear();

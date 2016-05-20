@@ -34,7 +34,7 @@ public:
     /*! \brief
      * Constructor
      */
-    STS() {
+    STS() :stepCompletedBarrier_(nullptr) {
         stepCounter_.store(0, std::memory_order_release);
         threads_.emplace_back(0);
     }
@@ -44,6 +44,7 @@ public:
         for(unsigned int i=1;i<threads_.size();i++) {
             threads_[i].join();
         }
+        delete stepCompletedBarrier_;
     }
     /*! \brief
      * Set number of threads in the pool
@@ -60,28 +61,41 @@ public:
         if (bUseDefaultSchedule_) {
             clearAssignments();
             for (int id = 0; id < n; id++) {
-                assign("default", id, {{id,     n},
-                        {id + 1, n}});
+                assign_loop("default", id, {{id,     n},
+                             {id + 1, n}});
             }
             bUseDefaultSchedule_ = true;
         }
     }
     /*! \brief
-     * Assign task to a thread
+     * Assign a basic task to a thread
      *
-     * If a range for a loop task is specified, only that section of the loop is assigned.
-     * In that case it is important to assign the remaining loop out of [0,1] also to
-     * some other thread. It is valid to assign multiple parts of a loop to the same thread.
-     * The order of assign calls specifies in which order the thread executes the tasks.
-     *
-     * \param[in] label    The label of the task. Needs to match the run()/parallel_for() label
+     * \param[in] label    The label of the task. Needs to match the run() label
      * \param[in] threadId The Id of the thread to assign to
-     * \param[in] range    The range for a loop task to assing. Ignored for basic task.
      */
-    void assign(std::string label, int threadId, Range<Ratio> range) {
+    void assign(std::string label, int threadId) {
+        assign_impl(label, threadId, Range<Ratio>(1), CALLER_IS_NOT_WORKER);
+    }
+    /*! \brief
+     * Assign a portion of a loop task to a thread
+     *
+     * Only the given section of the loop is assigned. It is important to assign the remaining
+     * loop out of [0,1] also to some other thread. It is valid to assign multiple parts of a
+     * loop to the same thread. The order of assign calls specifies in which order the thread
+     * executes the tasks.
+     *
+     * \param[in] label    The label of the task. Needs to match the parallel_for() label
+     * \param[in] threadId The Id of the thread to assign to
+     * \param[in] range    The range for a loop task to assign. Ignored for basic tasks.
+     */
+    void assign_loop(std::string label, int threadId, Range<Ratio> range) {
+        assign_impl(label, threadId, range, CALLER_IS_WORKER);
+    }
+    void assign_impl(std::string label, int threadId, Range<Ratio> range, BARRIER_CALLER_TYPE bcType) {
         int id = getTaskId(label);
         assert(range.start>=0 && range.end<=1);
         SubTask const* subtask = threads_.at(threadId).addSubtask(id, range);
+        tasks_[id].barrierCallerType_ = bcType;
         tasks_[id].pushSubtask(threadId, subtask);
         bUseDefaultSchedule_ = false;
     }
@@ -119,6 +133,8 @@ public:
         for (int i=0; i<threads_.size(); i++) {
             threads_[i].resetTaskQueue();
         }
+        delete stepCompletedBarrier_;
+        stepCompletedBarrier_ = new OMHyperBarrier(threads_.size());
         stepCounter_.fetch_add(1, std::memory_order_release);
     }
     /*! \brief
@@ -129,11 +145,17 @@ public:
      */
     template<typename F>
     void run(std::string label, F function) {
+        // Nesting not yet supported for run calls.
+        assert(Thread::getId() == 0);
         if (bUseDefaultSchedule_) {
             function();
         } else {
-            tasks_[getTaskId(label)].functor_ = new BasicTaskFunctor<F>(function);
-            tasks_[getTaskId(label)].functorBeginBarrier_->enter(getTaskThreadId());
+            Task &t = tasks_[getTaskId(label)];
+            t.functor_ = new BasicTaskFunctor<F>(function);
+            int barrierId = t.getBarrierId(Thread::getId());
+            // Caller must be the master thread of the barrier.
+            assert(barrierId == 0);
+            t.functorBeginBarrier_->enter(barrierId);
         }
     }
     /*! \brief
@@ -157,13 +179,15 @@ public:
         auto &task = tasks_[taskId];
         task.reduction_ = red;
         task.functor_ = new LoopTaskFunctor<F>(body, {start, end});
-        task.functorBeginBarrier_->enter(getTaskThreadId());
+        int bid = task.getBarrierId(Thread::getId());
+        // Caller must be the master thread of the barrier.
+        assert(bid == 0);
+        task.functorBeginBarrier_->enter(bid);
         auto &thread = threads_[Thread::getId()];
         //Calling processTask implies that the thread calling parallel_for participates in the loop and executes it next in queue
         assert(thread.getNextSubtask()->getTaskId()==taskId);
         thread.processTask();
         auto startWaitTime = sts_clock::now();
-        task.functorEndBarrier_->enter(getTaskThreadId());
         task.waitTime_ = sts_clock::now() - startWaitTime;
 
         // TODO: A smarter reduction would take place before the above wait.
@@ -177,13 +201,15 @@ public:
     void reschedule() {
         // not yet available
     }
+    //! Mark that all tasks have been completed (called by every thread after processing queue)
+    void markAllTasksComplete() {
+        stepCompletedBarrier_->enter(Thread::getId());
+    }
     //! Wait on all tasks to finish
     void wait() {
         if (!bUseDefaultSchedule_) {
-            threads_[0].processQueue(); //Before waiting the OS thread executes its queue
-            for(unsigned int i=1;i<tasks_.size();i++) {
-                tasks_[i].functorEndBarrier_->enter(getTaskThreadId());
-            }
+            threads_[0].processQueue();
+            // Thread 0 waits for all other threads at end of processing
             if (bSTSDebug_) {
                 std::cerr << "Times for step " << loadStepCounter() << std::endl;
                 for (const auto &t : tasks_) {
@@ -215,11 +241,17 @@ public:
      * \returns task functor
      */
     ITaskFunctor *getTaskFunctor(int taskId) {
-        tasks_[taskId].functorBeginBarrier_->enter(getTaskThreadId());
+        int barrierId = tasks_[taskId].getBarrierId(Thread::getId());
+        assert(barrierId > -1);
+        tasks_[taskId].functorBeginBarrier_->enter(barrierId);
         return tasks_[taskId].functor_;
     }
     void markSubtaskComplete(int taskId) {
-        tasks_[taskId].functorEndBarrier_->enter(getTaskThreadId());
+        if (tasks_[taskId].functorEndBarrier_ != nullptr) {
+            int barrierId = tasks_[taskId].getBarrierId(Thread::getId());
+            assert(barrierId > -1);
+            tasks_[taskId].functorEndBarrier_->enter(barrierId);
+        }
     }
     /* \brief
      * Get number of threads for current task or 0 if no current task
@@ -316,6 +348,7 @@ private:
     bool bUseDefaultSchedule_ = true;
     bool bSTSDebug_ = true;
     std::atomic<int> stepCounter_;
+    OMHyperBarrier *stepCompletedBarrier_;
 };
 
 #endif // STS_STS_H

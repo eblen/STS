@@ -49,14 +49,14 @@ void assign_threads() {
     assign("TASK_F", 1);
     assign("TASK_G", 2);
 
-    assign("TASK_F_0", 1, {0, {2,3}});
+    assign_loop("TASK_F_0", 1, {0, {2,3}});
 
-    assign("TASK_G_0", 2, {0, {1,2}});
-    assign("TASK_G_1", 2, {0, {1,2}});
+    assign_loop("TASK_G_0", 2, {0, {1,2}});
+    assign_loop("TASK_G_1", 2, {0, {1,2}});
 
-    assign("TASK_G_0", 0, {{1,2}, 1});
-    assign("TASK_F_0", 0, {{2,3}, 1});
-    assign("TASK_G_1", 0, {{1,2}, 1});
+    assign_loop("TASK_G_0", 0, {{1,2}, 1});
+    assign_loop("TASK_F_0", 0, {{2,3}, 1});
+    assign_loop("TASK_G_1", 0, {{1,2}, 1});
 }
 
 int main(int argc, char **argv)

@@ -57,21 +57,33 @@ void run(std::string l, F f)
 }
 
 /*! \brief
- * Assign task to a thread
+ * Assign a basic task to a thread
  *
- * If a range for a loop task is specified, only that section of the loop is assigned.
- * In that case it is important to assign the remaining loop out of [0,1] also to
- * some other thread. It is valid to assign multiple parts of a loop to the same thread.
- * The order of assign calls specifies in which order the thread executes the tasks.
- *
- * \param[in] label    The label of the task. Needs to match the run()/parallel_for() label
+ * \param[in] label    The label of the task. Needs to match the run() label
  * \param[in] threadId The Id of the thread to assign to
- * \param[in] range    The range for a loop task to assign. Ignored for basic task.
  */
 inline
-void assign(std::string label, int threadId, Range<Ratio> range = Range<Ratio>(1))
+void assign(std::string label, int threadId)
 {
-    STS::getInstance()->assign(label, threadId, range);
+    STS::getInstance()->assign(label, threadId);
+}
+
+/*! \brief
+ * Assign a portion of a loop task to a thread
+ *
+ * Only the given section of the loop is assigned. It is important to assign the remaining
+ * loop out of [0,1] also to some other thread. It is valid to assign multiple parts of a
+ * loop to the same thread. The order of assign calls specifies in which order the thread
+ * executes the tasks.
+ *
+ * \param[in] label    The label of the task. Needs to match the parallel_for() label
+ * \param[in] threadId The Id of the thread to assign to
+ * \param[in] range    The range for a loop task to assign. Ignored for basic tasks.
+ */
+inline
+void assign_loop(std::string label, int threadId, Range<Ratio> range)
+{
+    STS::getInstance()->assign_loop(label, threadId, range);
 }
 
 //! Clear all thread assignments

@@ -89,6 +89,8 @@ private:
     Range<Ratio> range_;           /**< Range (out of [0,1]) of loop part */
 };
 
+enum BARRIER_CALLER_TYPE {CALLER_IS_WORKER, CALLER_IS_NOT_WORKER};
+
 /*! \brief
  * A task to be executed
  *
@@ -102,6 +104,8 @@ struct Task {
     ITaskFunctor *functor_;      //!< The function/loop to execute
     MOHyperBarrier *functorBeginBarrier_;
     OMHyperBarrier *functorEndBarrier_;
+    BARRIER_CALLER_TYPE barrierCallerType_;
+
     //! All subtasks of this task. One for each section of a loop. One for a basic task.
     std::vector<SubTask const*> subtasks_;
     //!< The waiting time in the implied barrier at the end of a loop. Zero for basic task.
@@ -109,7 +113,8 @@ struct Task {
     sts_clock::duration reductionTime_;
 
     Task() :reduction_(nullptr), waitTime_(0), reductionTime_(0), functor_(nullptr),
-            functorBeginBarrier_(nullptr), functorEndBarrier_(nullptr), numThreads_(0) {}
+            functorBeginBarrier_(nullptr), functorEndBarrier_(nullptr), numThreads_(0),
+            barrierCallerType_(CALLER_IS_WORKER) {}
     void pushSubtask(int threadId, SubTask const* t) {
         subtasks_.push_back(t);
         if (threadTaskIds_.find(threadId) == threadTaskIds_.end()) {
@@ -120,8 +125,14 @@ struct Task {
     void createBarriers() {
         delete functorBeginBarrier_;
         delete functorEndBarrier_;
-        functorBeginBarrier_ = new MOHyperBarrier(numThreads_);
-        functorEndBarrier_   = new OMHyperBarrier(numThreads_);
+        int nthreads = barrierCallerType_ == CALLER_IS_WORKER ? numThreads_ : numThreads_ + 1;
+        functorBeginBarrier_ = new MOHyperBarrier(nthreads);
+        if (numThreads_ > 1) {
+            functorEndBarrier_   = new OMHyperBarrier(nthreads);
+        }
+        else {
+            functorEndBarrier_ = nullptr;
+        }
     }
     void clearSubtasks() {
         subtasks_.clear();
@@ -137,6 +148,20 @@ struct Task {
             return -1;
         }
         return (*id).second;
+    }
+    int getBarrierId(int globalThreadId) const {
+        if (barrierCallerType_ == CALLER_IS_WORKER) {
+            return getThreadId(globalThreadId);
+        }
+        // Currently, this has to be a basic, non-loop task with thread
+        // 0 as a non-working caller and all others as the lone worker.
+        // WARNING: This currently works by accident if 0 is both caller
+        // and worker. Basic tasks only have a begin barrier, and thread
+        // 0 never halts at that barrier. This is fine, though, because
+        // thread 0 always sets the functor before attempting to run it!
+        else {
+            return globalThreadId == 0 ? 0 : 1;
+        }
     }
 private:
     int numThreads_;

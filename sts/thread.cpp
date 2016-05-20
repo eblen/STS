@@ -32,6 +32,7 @@ void Thread::processQueue() {
     while(nextSubtaskId_<s) {
         processTask();
     }
+    STS::getInstance()->markAllTasksComplete();
     nextSubtaskId_=0;
 }
 
@@ -39,6 +40,8 @@ void Thread::processTask() {
     auto& subtask = taskQueue_[nextSubtaskId_++];
     auto startWaitTime = sts_clock::now();
     ITaskFunctor *task = STS::getInstance()->getTaskFunctor(subtask.getTaskId());
+    // Indicates barrier failure
+    assert(task != nullptr);
     auto startTaskTime = sts_clock::now();
     subtask.waitTime_ = startTaskTime - startWaitTime;
     task->run(subtask.getRange());

@@ -21,7 +21,7 @@ int main(int argc, char **argv)
   setNumThreads(nthreads);
   clearAssignments();
   assign("TASK_F", 0);
-  for (int t=0; t<nthreads; t++) assign("TASK_F_0", t, {{t,nthreads},{t+1,nthreads}});
+  for (int t=0; t<nthreads; t++) assign_loop("TASK_F_0", t, {{t,nthreads},{t+1,nthreads}});
   for (int step=0; step<nsteps; step++) {
       nextStep();
       run("TASK_F", task_f);

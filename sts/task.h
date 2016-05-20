@@ -136,7 +136,7 @@ struct Task {
         if (id == threadTaskIds_.end()) {
             return -1;
         }
-        return (*id).first;
+        return (*id).second;
     }
 private:
     int numThreads_;

@@ -4,6 +4,7 @@
 #include <cassert>
 
 #include <atomic>
+#include <vector>
 
 /*
  * Functions for spin waiting
@@ -67,28 +68,36 @@ private:
  */
 class OMBarrier {
 public:
-    OMBarrier() :numThreadsRemaining(0) {}
+    OMBarrier() :nthreads(0), threadFinished(nullptr) {}
     /*! \brief
      * Register with the barrier. Should be called by "M" threads.
      */
-    void markArrival() {
-        numThreadsRemaining--;
+    void markArrival(int tid) {
+        (*threadFinished)[tid] = true;
     }
     /*! \brief
      * Wait on barrier. Should be called by "O" thread.
      */
     void wait() {
-        wait_until(numThreadsRemaining, 0);
+        for (int i=1; i<nthreads; i++) {
+            wait_until((*threadFinished)[i], true);
+        }
     }
     /*! \brief
      * Reset barrier
      */
-    void close(int nthreads) {
-        numThreadsRemaining.store(nthreads);
+    void close(int n) {
+        nthreads = n;
+        delete threadFinished;
+        threadFinished = new std::vector< std::atomic<bool> >(nthreads);
+        for (int i=0; i<nthreads; i++) {
+            (*threadFinished)[i] = false;
+        }
     }
 
 private:
-    std::atomic_int numThreadsRemaining;
+    int nthreads;
+    std::vector< std::atomic<bool> > *threadFinished;
 };
 
 #endif // STS_BARRIER_H

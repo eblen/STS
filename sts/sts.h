@@ -220,7 +220,7 @@ public:
         return tasks_[taskId].functor_;
     }
     void markSubtaskComplete(int taskId) {
-        tasks_[taskId].functorEndBarrier_.markArrival();
+        tasks_[taskId].functorEndBarrier_.markArrival(Thread::getId());
     }
     /* \brief
      * Get number of threads for current task or 0 if no current task

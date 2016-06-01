@@ -97,6 +97,7 @@ private:
 
 // TODO: Make configurable
 static const int branchFactor = 2;
+static const int PADDING = 64;
 
 class MOHyperBarrier {
 public:
@@ -105,10 +106,10 @@ public:
         // TODO: Prune tree using real nthreads count
         for (int level = 0, numLocks =  1; numLocks <= nthreads / branchFactor;
                  level++,   numLocks *= branchFactor) {
-            locks.push_back(std::deque< std::atomic_bool >(numLocks));
+            locks.push_back(std::deque< std::atomic_bool >(numLocks*PADDING));
             // Cannot initialize in previous line due to lack of copy constructor for atomics
-            for (int j=0; j<locks[level].size(); j++) {
-                locks[level][j].store(true);
+            for (int j=0; j<numLocks; j++) {
+                locks[level][j*PADDING].store(true);
             }
         }
     }
@@ -122,7 +123,7 @@ public:
         for (; tid % skip != 0; level++, skip /= branchFactor);
         // Wait at that level
         if (tid != 0) {
-            wait_until(locks[level][tid / skip / branchFactor], false);
+            wait_until(locks[level][(tid / skip / branchFactor)*PADDING], false);
         }
         // Release children at lower levels
         if (tid != 0) {
@@ -130,7 +131,7 @@ public:
             skip /= branchFactor;
         }
         for (; level < locks.size(); level++, skip /= branchFactor) {
-            locks[level][tid / skip / branchFactor].store(false);
+            locks[level][(tid / skip / branchFactor)*PADDING].store(false);
         }
     }
 private:
@@ -146,14 +147,14 @@ public:
         for (int level = 0, skip = branchFactor; skip <= nthreads;
                  level++,   skip *= branchFactor) {
             int numLocks = std::ceil(real_nthreads / (double)skip);
-            locks.push_back(std::deque< std::atomic_int >(numLocks));
+            locks.push_back(std::deque< std::atomic_int >(numLocks*PADDING));
             // Cannot initialize in previous line due to lack of copy constructor for atomics
-            for (int j=0; j<locks[level].size(); j++) {
+            for (int j=0; j<numLocks; j++) {
                 // TODO: Avoid locks initialized to zero
                 int prevSkip = skip / branchFactor;
                 int remChildren = std::ceil(real_nthreads/ (double)prevSkip) - j * branchFactor - 1;
                 int numChildren = std::min(branchFactor-1, remChildren);
-                locks[level][j].store(numChildren);
+                locks[level][j*PADDING].store(numChildren);
             }
         }
     }
@@ -163,10 +164,10 @@ public:
     void enter(int tid) {
         for (int level = 0, bpow = branchFactor; level < locks.size(); level++, bpow *= branchFactor) {
             if (tid % bpow == 0) {
-                wait_until(locks[level][tid / bpow], 0);
+                wait_until(locks[level][(tid / bpow)*PADDING], 0);
             }
             else {
-                locks[level][tid / bpow]--;
+                locks[level][(tid / bpow)*PADDING]--;
                 break;
             }
         }

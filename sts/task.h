@@ -108,7 +108,7 @@ struct Task {
     sts_clock::duration waitTime_;
     sts_clock::duration reductionTime_;
 
-    Task() :reduction_(nullptr), waitTime_(0), reductionTime_(0), functor_(nullptr), numThreads_(0) {}
+    Task() :reduction_(nullptr), functor_(nullptr), waitTime_(0), reductionTime_(0), numThreads_(0) {}
     void pushSubtask(int threadId, SubTask const* t) {
         subtasks_.push_back(t);
         if (threadTaskIds_.find(threadId) == threadTaskIds_.end()) {

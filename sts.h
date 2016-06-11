@@ -96,6 +96,15 @@ void reschedule()
 }
 
 /*! \brief
+ * Get number of threads in the pool
+ */
+inline
+int getNumThreads()
+{
+    return STS::getInstance()->getNumThreads();
+}
+
+/*! \brief
  * Set number of threads in the pool
  *
  * \param[in] n number of threads to use (including OS thread)

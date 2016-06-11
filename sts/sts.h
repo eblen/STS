@@ -46,6 +46,12 @@ public:
         }
     }
     /*! \brief
+     * Get number of threads in the pool
+     */
+    int getNumThreads() {
+        return threads_.size();
+    }
+    /*! \brief
      * Set number of threads in the pool
      *
      * \param[in] n number of threads to use (including OS thread)
@@ -130,7 +136,7 @@ public:
      */
     template<typename F>
     void run(std::string label, F function) {
-        if (bUseDefaultSchedule_) {
+        if (!isTaskAssigned(label) || bUseDefaultSchedule_) {
             function();
         } else {
             tasks_[getTaskId(label)].functor_ = new BasicTaskFunctor<F>(function);
@@ -149,7 +155,15 @@ public:
     template<typename F, typename T=int>
     void parallel_for(std::string label, int64_t start, int64_t end, F body, TaskReduction<T> *red = nullptr) {
         int taskId = 0;
-        if (bUseDefaultSchedule_) {
+        if (!isTaskAssigned(label)) {
+            for (int i=start; i<end; i++) {
+                body(i);
+            }
+            if (red != nullptr) {
+                red->reduce();
+            }
+            return;
+        } else if (bUseDefaultSchedule_) {
             nextStep(); //Default schedule has only a single step and the user doesn't need to call nextStep
             assert(getTaskId("default")==taskId);
         } else {
@@ -281,6 +295,9 @@ private:
             return nullptr;
         }
         return &tasks_[taskId];
+    }
+    bool isTaskAssigned(std::string label) {
+        return (taskLabels_.find(label) != taskLabels_.end());
     }
     //Creates new ID for unknown label.
     //Creating IDs isn't thread safe. OK because assignments and run/parallel_for (if run without pre-assignment) are executed by master thread while other threads wait on nextStep.

@@ -19,16 +19,15 @@ void Thread::setAffinity(int coreId) {
 }
 
 void Thread::doWork() {
-    STS *sts = STS::getInstance();
     for (int i=0; ; i++) {
-        int c = sts->waitOnStepCounter(i);
+        int c = STS::getInstance()->waitOnStepCounter(i);
         if (c<0) break; //negative task counter signals to terminate the thread
         processQueue();
     }
 }
 
 void Thread::processQueue() {
-    unsigned int s = taskQueue_.size();
+    unsigned int s = STS::getInstance()->getNumSubTasks(Thread::id_);
     while(nextSubtaskId_<s) {
         processTask();
     }
@@ -36,13 +35,13 @@ void Thread::processQueue() {
 }
 
 void Thread::processTask() {
-    auto& subtask = taskQueue_[nextSubtaskId_++];
+    SubTask* subtask = STS::getInstance()->getSubTask(Thread::id_, nextSubtaskId_++);
     auto startWaitTime = sts_clock::now();
-    ITaskFunctor *task = STS::getInstance()->getTaskFunctor(subtask.getTaskId());
+    ITaskFunctor *task = STS::getInstance()->getTaskFunctor(subtask->getTaskId());
     auto startTaskTime = sts_clock::now();
-    subtask.waitTime_ = startTaskTime - startWaitTime;
-    task->run(subtask.getRange());
-    subtask.runTime_ = sts_clock::now() - startTaskTime;
-    STS::getInstance()->markSubtaskComplete(subtask.getTaskId());
+    subtask->waitTime_ = startTaskTime - startWaitTime;
+    task->run(subtask->getRange());
+    subtask->runTime_ = sts_clock::now() - startTaskTime;
+    STS::getInstance()->markSubtaskComplete(subtask->getTaskId());
 }
 

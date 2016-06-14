@@ -50,37 +50,6 @@ public:
     void processQueue();
     //! Execute the next subtask in the queue
     void processTask();
-    /*! \brief
-     * Add a subtask to the end of the queue
-     *
-     * \param[in] taskID  The ID of the task to add
-     * \param[in] range   The range of the loop to be done by this thread
-     *                    Ignored for basic tasks.
-     * \returns           Pointer to sub-task added
-    */
-    SubTask const* addSubtask(int taskId, Range<Ratio> range) {
-        taskQueue_.emplace_back(taskId, range);
-        return &(taskQueue_.back());
-    }
-    /*! \brief
-     * Clear all sub-tasks in the queue.
-     *
-     * Is called by clearAssignments to prepare for rescheduling tasks. */
-    void clearSubtasks() { taskQueue_.clear(); }
-    /*! \brief
-     * Return sub-task next in queue
-     *
-     * \returns      Pointer to sub-task
-     */
-    SubTask const* getNextSubtask() { return &(taskQueue_[nextSubtaskId_]); }
-    /*! \brief
-     * Resets queue in prepartion for the next step
-     *
-     * Does not delete queue. @see clearSubtasks
-     */
-    void resetTaskQueue() {
-        if (!thread_) nextSubtaskId_ = 0;
-    }
     //! Wait for thread to finish
     void join() { if (thread_) thread_->join(); }
     /*! \brief
@@ -92,17 +61,13 @@ public:
      * \returns thread Id
      */
     static int getId() { return id_; }
-    int getCurrentTaskId() {
-        if (nextSubtaskId_ < 1) {
-            return -1;
-        }
-        return taskQueue_[nextSubtaskId_ - 1].getTaskId();
+    int getCurrentSubTaskId() {
+        return nextSubtaskId_ - 1;
     }
 private:
     void doWork(); //function executed by worker threads
     void setAffinity(int coreId);
 
-    std::deque<SubTask> taskQueue_;
     unsigned int nextSubtaskId_ = 0;
     std::unique_ptr<std::thread> thread_;
     static thread_local int id_;

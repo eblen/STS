@@ -6,6 +6,7 @@
 #include <atomic>
 #include <deque>
 #include <map>
+#include <vector>
 #include <string>
 #include <chrono>
 #include <iostream>
@@ -34,7 +35,7 @@ public:
     /*! \brief
      * Constructor
      */
-    STS() {
+    STS() :threadSubTasks_(1) {
         stepCounter_.store(0, std::memory_order_release);
         threads_.emplace_back(0);
     }
@@ -63,6 +64,7 @@ public:
         for (int id = threads_.size(); id > n; id--) {
             threads_.pop_back();
         }
+        threadSubTasks_.resize(n);
         if (bUseDefaultSchedule_) {
             clearAssignments();
             for (int id = 0; id < n; id++) {
@@ -87,8 +89,9 @@ public:
     void assign(std::string label, int threadId, Range<Ratio> range) {
         int id = getTaskId(label);
         assert(range.start>=0 && range.end<=1);
-        SubTask const* subtask = threads_.at(threadId).addSubtask(id, range);
-        tasks_[id].pushSubtask(threadId, subtask);
+        SubTask *t = new SubTask(id, range);
+        threadSubTasks_[threadId].push_back(t);
+        tasks_[id].pushSubtask(threadId, t);
         bUseDefaultSchedule_ = false;
     }
     /* \brief
@@ -108,8 +111,8 @@ public:
     }
     //! Clear all assignments
     void clearAssignments() {
-        for (auto &thread : threads_) {
-            thread.clearSubtasks();
+        for (auto &taskList : threadSubTasks_) {
+            taskList.clear();
         }
         for (auto &task : tasks_) {
             task.clearSubtasks();
@@ -122,9 +125,6 @@ public:
             task.functor_ = nullptr;
             task.functorBeginBarrier_.close();
             task.functorEndBarrier_.close(task.getNumThreads());
-        }
-        for (int i=0; i<threads_.size(); i++) {
-            threads_[i].resetTaskQueue();
         }
         stepCounter_.fetch_add(1, std::memory_order_release);
     }
@@ -175,7 +175,8 @@ public:
         task.functorBeginBarrier_.open();
         auto &thread = threads_[Thread::getId()];
         //Calling processTask implies that the thread calling parallel_for participates in the loop and executes it next in queue
-        assert(thread.getNextSubtask()->getTaskId()==taskId);
+        int nextSubTaskId = thread.getCurrentSubTaskId() + 1;
+        assert(getSubTask(Thread::getId(), nextSubTaskId)->getTaskId() == taskId);
         thread.processTask();
         auto startWaitTime = sts_clock::now();
         task.functorEndBarrier_.wait();
@@ -229,6 +230,12 @@ public:
     ITaskFunctor *getTaskFunctor(int taskId) {
         tasks_[taskId].functorBeginBarrier_.wait();
         return tasks_[taskId].functor_;
+    }
+    SubTask *getSubTask(int threadId, int subTaskId) const {
+        return threadSubTasks_[threadId][subTaskId];
+    }
+    int getNumSubTasks(int threadId) const {
+        return threadSubTasks_[threadId].size();
     }
     void markSubtaskComplete(int taskId) {
         tasks_[taskId].functorEndBarrier_.markArrival();
@@ -284,10 +291,17 @@ public:
      */
     int waitOnStepCounter(int c) {return wait_until_not(stepCounter_, c);}
 private:
-    // Helper function for operations that need the current task
-    const Task *getCurrentTask() {
+    // Helper functions for operations that need the current task
+    int getCurrentTaskId() {
         int threadId = Thread::getId();
-        int taskId = threads_[threadId].getCurrentTaskId();
+        int subTaskId = threads_[threadId].getCurrentSubTaskId();
+        if (subTaskId == -1) {
+            return -1;
+        }
+        return threadSubTasks_[threadId][subTaskId]->getTaskId();
+    }
+    const Task *getCurrentTask() {
+        int taskId = getCurrentTaskId();
         if (taskId == -1) {
             return nullptr;
         }
@@ -327,6 +341,7 @@ private:
     std::deque<Task>  tasks_;  //It is essential this isn't a vector (doesn't get moved when resizing). Is this ok to be a list (linear) or does it need to be a tree? A serial task isn't before a loop. It is both before and after.
     std::map<std::string,int> taskLabels_;
     std::deque<Thread> threads_;
+    std::vector< std::vector<SubTask *> > threadSubTasks_;
     static std::unique_ptr<STS> instance_;
     bool bUseDefaultSchedule_ = true;
     bool bSTSDebug_ = true;

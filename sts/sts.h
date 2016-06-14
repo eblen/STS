@@ -200,16 +200,13 @@ public:
                 tasks_[i].functorEndBarrier_.wait();
             }
             if (bSTSDebug_) {
-                std::cerr << "Times for step " << loadStepCounter() << std::endl;
                 for (const auto &t : tasks_) {
                     for (const auto &st : t.subtasks_) {
                         auto wtime = std::chrono::duration_cast<std::chrono::microseconds>(st->waitTime_).count();
                         auto rtime = std::chrono::duration_cast<std::chrono::microseconds>(st->runTime_).count();
-                        std::cerr << getTaskLabel(st->getTaskId()) << " " << wtime << " " << rtime << std::endl;
                     }
                     if (t.subtasks_.size() > 1) {
                         auto ltwtime = std::chrono::duration_cast<std::chrono::microseconds>(t.waitTime_).count();
-                        std::cerr << "Wait for task to complete " << ltwtime << std::endl;
                     }
                 }
             }

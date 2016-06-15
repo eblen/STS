@@ -1,13 +1,15 @@
 #include <cmath>
 
 #include "barrier.h"
-#include "sts.h"
+#include "sts/sts.h"
 
 const int nsteps = 10;
 const int nthreads = 10;
 const int size = 100;
 float A[size] = {0};
 float B[size] = {0};
+
+STS *sts;
 
 void do_something_A(int i) {
     static Barrier b(nthreads);
@@ -18,20 +20,22 @@ void do_something_A(int i) {
 }
 
 void task_f() {
-    parallel_for("TASK_F_0", 0, size, [=](size_t i) {do_something_A(i);});
+    sts->parallel_for("TASK_F_0", 0, size, [=](size_t i) {do_something_A(i);});
 }
 
 int main(int argc, char **argv)
 {
-  setNumThreads(nthreads);
-  clearAssignments();
-  assign("TASK_F", 0);
-  for (int t=0; t<nthreads; t++) assign("TASK_F_0", t, {{t,nthreads},{t+1,nthreads}});
+  STS::startup(nthreads);
+  sts = new STS();
+  sts->clearAssignments();
+  sts->assign("TASK_F", 0);
+  for (int t=0; t<nthreads; t++) sts->assign("TASK_F_0", t, {{t,nthreads},{t+1,nthreads}});
   for (int step=0; step<nsteps; step++) {
-      nextStep();
-      run("TASK_F", task_f);
-      wait();
+      sts->nextStep();
+      sts->run("TASK_F", task_f);
+      sts->wait();
   }
+  STS::shutdown();
   int num_samples = 4;
   for (int i=0; i<num_samples; i++) printf("%f\n", B[i*(size/num_samples)]);
 }

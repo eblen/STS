@@ -22,6 +22,7 @@ void Thread::doWork() {
     for (int i=0; ; i++) {
         int c = STS::getInstance()->waitOnStepCounter(i);
         if (c<0) break; //negative task counter signals to terminate the thread
+        STS *sts = STS::getInstance();
         processQueue();
     }
 }

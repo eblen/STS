@@ -17,6 +17,28 @@
 #include "task.h"
 #include "thread.h"
 
+/* Overall design:
+ * The framework can execute simple tasks (via "run") and execute loops in
+ * parallel (via "parallel_for"). It supports two run modi: either with an
+ * explicit schedule or with a default schedule. With the default schedule
+ * tasks are run in serial and only loop level parallelism is used. This is
+ * useful if either the tasks are not yet known or only simple parallelism is
+ * needed. With an explicit schedule one can specify which task runs on which
+ * thread and in which order (based on the order of task assignment). Loops
+ * can be split among the threads using ratios (e.g. thread 0 does 1/3 of
+ * the loop while thread 1 does the remaining 2/3). The idea is that this
+ * schedule is either computed by the user of the framework using "assign"
+ * or automatically computed by the framework using "reschedule." (Automatic
+ * scheduling is not yet implemented.) Timing data is recorded for each task
+ * so that adjustments can be made (or not) after each "step." One "step"
+ * contains a number of scheduled tasks and a new step starts when "nextStep"
+ * is called. Normally, a step will be one iteration of a main loop, like a
+ * time step in MD, but this is of course not required. The part of a task
+ * done by a thread is called a sub-task. A simple task is always fully
+ * done by one thread and for a loop-task the range done by each thread is
+ * specified. The whole design is lock free and only relies on atomics.
+ */
+
 /*! \brief
  * Static task scheduler
  *
@@ -33,46 +55,51 @@
 class STS {
 public:
     /*! \brief
-     * Constructor
+     * Startup STS and set the number of threads.
+     * No STS functions should be called before Startup.
      */
-    STS() :threadSubTasks_(1) {
-        stepCounter_.store(0, std::memory_order_release);
-        threads_.emplace_back(0);
+    static void startup(int numThreads) {
+        assert(threads_.size() == 0);
+        assert(numThreads > 0);
+        for (int id = 0; id < numThreads; id++) {
+            threads_.emplace_back(id); //create threads
+        }
     }
-    ~STS() {
+    /*! \brief
+     * Stops all threads.
+     * No STS functions should be called after Shutdown.
+     */
+    static void shutdown() {
+        assert(instance_ == nullptr);
         //-1 notifies threads to finish
         stepCounter_.store(-1, std::memory_order_release);
-        for(unsigned int i=1;i<threads_.size();i++) {
+        for (unsigned int i=1;i<threads_.size();i++) {
             threads_[i].join();
+        }
+    }
+    STS() {
+        int n = getNumThreads();
+        assert(n > 0);
+        threadSubTasks_.resize(n);
+        if (bUseDefaultSchedule_) {
+            for (int id = 0; id < n; id++) {
+                assign("default", id, {{id, n},
+                        {id + 1, n}});
+            }
+        }
+    }
+    ~STS() {
+        for (auto& taskList : threadSubTasks_) {
+            for (SubTask *t : taskList) {
+                delete t;
+            }
         }
     }
     /*! \brief
      * Get number of threads in the pool
      */
-    int getNumThreads() {
+    static int getNumThreads() {
         return threads_.size();
-    }
-    /*! \brief
-     * Set number of threads in the pool
-     *
-     * \param[in] n number of threads to use (including OS thread)
-     */
-    void setNumThreads(int n) {
-        for (int id = threads_.size(); id < n; id++) {
-            threads_.emplace_back(id); //create threads
-        }
-        for (int id = threads_.size(); id > n; id--) {
-            threads_.pop_back();
-        }
-        threadSubTasks_.resize(n);
-        if (bUseDefaultSchedule_) {
-            clearAssignments();
-            for (int id = 0; id < n; id++) {
-                assign("default", id, {{id,     n},
-                        {id + 1, n}});
-            }
-            bUseDefaultSchedule_ = true;
-        }
     }
     /*! \brief
      * Assign task to a thread
@@ -86,28 +113,13 @@ public:
      * \param[in] threadId The Id of the thread to assign to
      * \param[in] range    The range for a loop task to assing. Ignored for basic task.
      */
-    void assign(std::string label, int threadId, Range<Ratio> range) {
+    void assign(std::string label, int threadId, Range<Ratio> range = Range<Ratio>(1)) {
         int id = getTaskId(label);
         assert(range.start>=0 && range.end<=1);
         SubTask *t = new SubTask(id, range);
         threadSubTasks_[threadId].push_back(t);
         tasks_[id].pushSubtask(threadId, t);
         bUseDefaultSchedule_ = false;
-    }
-    /* \brief
-     * Collect the given value for the current task for later reduction
-     *
-     * \param[in] value to collect
-     */
-    template<typename T>
-    void collect(T a, int ttid) {
-        const Task *t = getCurrentTask();
-        // TODO: This is a user error - calling collect outside of a task.
-        // Currently, we simply ignore the call. How should it be handled?
-        if (t == nullptr) {
-            return;
-        }
-        (static_cast<TaskReduction<T> *>(t->reduction_))->collect(a, ttid);
     }
     //! Clear all assignments
     void clearAssignments() {
@@ -121,6 +133,8 @@ public:
     //! Notify threads to start computing the next step
     void nextStep() {
         assert(Thread::getId()==0);
+        assert(instance_ == nullptr);
+        instance_ = this;
         for (auto &task: tasks_) {
             task.functor_ = nullptr;
             task.functorBeginBarrier_.close();
@@ -136,6 +150,7 @@ public:
      */
     template<typename F>
     void run(std::string label, F function) {
+        assert(this == instance_);
         if (!isTaskAssigned(label) || bUseDefaultSchedule_) {
             function();
         } else {
@@ -154,6 +169,7 @@ public:
      */
     template<typename F, typename T=int>
     void parallel_for(std::string label, int64_t start, int64_t end, F body, TaskReduction<T> *red = nullptr) {
+        assert(this == instance_);
         int taskId = 0;
         if (!isTaskAssigned(label)) {
             for (int i=start; i<end; i++) {
@@ -195,6 +211,7 @@ public:
     }
     //! Wait on all tasks to finish
     void wait() {
+        assert(this == instance_);
         if (!bUseDefaultSchedule_) {
             threads_[0].processQueue(); //Before waiting the OS thread executes its queue
             for(unsigned int i=1;i<tasks_.size();i++) {
@@ -212,13 +229,14 @@ public:
                 }
             }
         }
+        instance_ = nullptr;
     }
     /*! \brief
-     * Returns the STS instance
+     * Returns the currently running STS instance (or nullptr if none)
      *
      * \returns STS instance
      */
-    static STS *getInstance() { return instance_.get(); }
+    static STS *getInstance() { return instance_; }
     /*! \brief
      * Returns the task functor for a given task Id
      *
@@ -290,6 +308,29 @@ public:
      * param[in] c   last step processed by thread
      */
     int waitOnStepCounter(int c) {return wait_until_not(stepCounter_, c);}
+
+    /* Task reduction functions */
+
+    /*! \brief
+     * Create a TaskReduction object
+     *
+     * \param[in] taskName  Name of task to which reduction applies
+     * \param[in] init      Initial value
+     */
+    template<typename T>
+    TaskReduction<T> createTaskReduction(std::string taskName, T init) {
+        int numThreads = getTaskNumThreads(taskName);
+        return TaskReduction<T>(taskName, init, numThreads);
+    }
+    /*! \brief
+     * Collect a value for a task's reduction. Must be called within a task.
+     *
+     * \param[in] a Value to be collected
+     */
+    template<typename T>
+    void collect(T a) {
+        collect(a, getTaskThreadId());
+    }
 private:
     // Helper functions for operations that need the current task
     int getCurrentTaskId() {
@@ -310,8 +351,8 @@ private:
     bool isTaskAssigned(std::string label) {
         return (taskLabels_.find(label) != taskLabels_.end());
     }
-    //Creates new ID for unknown label.
-    //Creating IDs isn't thread safe. OK because assignments and run/parallel_for (if run without pre-assignment) are executed by master thread while other threads wait on nextStep.
+    // Creates new ID for unknown label.
+    // Creating IDs isn't thread safe. OK because assignments and run/parallel_for (if run without pre-assignment) are executed by master thread while other threads wait on nextStep.
     int getTaskId(std::string label) {
         auto it = taskLabels_.find(label);
         if (it != taskLabels_.end()) {
@@ -337,15 +378,29 @@ private:
         }
         throw std::invalid_argument("Invalid task Id: "+id);
     }
-
+    /* \brief
+     * Collect the given value for the current task for later reduction
+     *
+     * \param[in] value to collect
+     */
+    template<typename T>
+    void collect(T a, int ttid) {
+        const Task *t = getCurrentTask();
+        // TODO: This is a user error - calling collect outside of a task.
+        // Currently, we simply ignore the call. How should it be handled?
+        if (t == nullptr) {
+            return;
+        }
+        (static_cast<TaskReduction<T> *>(t->reduction_))->collect(a, ttid);
+    }
     std::deque<Task>  tasks_;  //It is essential this isn't a vector (doesn't get moved when resizing). Is this ok to be a list (linear) or does it need to be a tree? A serial task isn't before a loop. It is both before and after.
     std::map<std::string,int> taskLabels_;
-    std::deque<Thread> threads_;
     std::vector< std::vector<SubTask *> > threadSubTasks_;
-    static std::unique_ptr<STS> instance_;
     bool bUseDefaultSchedule_ = true;
     bool bSTSDebug_ = true;
-    std::atomic<int> stepCounter_;
+    static std::deque<Thread> threads_;
+    static std::atomic<int> stepCounter_;
+    static STS *instance_;
 };
 
 #endif // STS_STS_H

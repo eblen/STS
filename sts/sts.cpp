@@ -1,5 +1,5 @@
 #include "sts.h"
 
-#include <memory>
-
-std::unique_ptr<STS> STS::instance_(new STS());
+std::deque<Thread> STS::threads_ = {};
+std::atomic<int> STS::stepCounter_ = 0;
+STS* STS::instance_ = nullptr;

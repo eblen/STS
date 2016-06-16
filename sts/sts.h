@@ -64,18 +64,21 @@ public:
         for (int id = 0; id < numThreads; id++) {
             threads_.emplace_back(id); //create threads
         }
+        defaultInstance_ = new STS();
+        instance_ = defaultInstance_;
     }
     /*! \brief
      * Stops all threads.
      * No STS functions should be called after Shutdown.
      */
     static void shutdown() {
-        assert(instance_ == nullptr);
+        assert(instance_ == defaultInstance_);
         //-1 notifies threads to finish
         stepCounter_.store(-1, std::memory_order_release);
         for (unsigned int i=1;i<threads_.size();i++) {
             threads_[i].join();
         }
+        delete defaultInstance_;
     }
     STS() {
         int n = getNumThreads();
@@ -133,7 +136,7 @@ public:
     //! Notify threads to start computing the next step
     void nextStep() {
         assert(Thread::getId()==0);
-        assert(instance_ == nullptr);
+        assert(instance_ == defaultInstance_);
         instance_ = this;
         for (auto &task: tasks_) {
             task.functor_ = nullptr;
@@ -171,7 +174,10 @@ public:
     void parallel_for(std::string label, int64_t start, int64_t end, F body, TaskReduction<T> *red = nullptr) {
         assert(this == instance_);
         int taskId = 0;
-        if (!isTaskAssigned(label)) {
+        if (bUseDefaultSchedule_) {
+            nextStep(); //Default schedule has only a single step and the user doesn't need to call nextStep
+            assert(getTaskId("default")==taskId);
+        } else if (!isTaskAssigned(label)) {
             for (int i=start; i<end; i++) {
                 body(i);
             }
@@ -179,9 +185,6 @@ public:
                 red->reduce();
             }
             return;
-        } else if (bUseDefaultSchedule_) {
-            nextStep(); //Default schedule has only a single step and the user doesn't need to call nextStep
-            assert(getTaskId("default")==taskId);
         } else {
             taskId = getTaskId(label);
         }
@@ -229,7 +232,7 @@ public:
                 }
             }
         }
-        instance_ = nullptr;
+        instance_ = defaultInstance_;
     }
     /*! \brief
      * Returns the currently running STS instance (or nullptr if none)
@@ -301,13 +304,13 @@ public:
      *
      * \returns step counter
      */
-    int loadStepCounter() { return stepCounter_.load(std::memory_order_acquire); }
+    static int loadStepCounter() { return stepCounter_.load(std::memory_order_acquire); }
     /* \brief
      * Wait on atomic step counter to change
      *
      * param[in] c   last step processed by thread
      */
-    int waitOnStepCounter(int c) {return wait_until_not(stepCounter_, c);}
+    static int waitOnStepCounter(int c) {return wait_until_not(stepCounter_, c);}
 
     /* Task reduction functions */
 
@@ -400,6 +403,7 @@ private:
     bool bSTSDebug_ = true;
     static std::deque<Thread> threads_;
     static std::atomic<int> stepCounter_;
+    static STS *defaultInstance_;
     static STS *instance_;
 };
 

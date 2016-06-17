@@ -54,6 +54,7 @@
  */
 class STS {
 public:
+    const std::string id;
     /*! \brief
      * Startup STS and set the number of threads.
      * No STS functions should be called before Startup.
@@ -80,7 +81,7 @@ public:
         }
         delete defaultInstance_;
     }
-    STS() {
+    STS(std::string name = "") :id(name) {
         int n = getNumThreads();
         assert(n > 0);
         threadSubTasks_.resize(n);
@@ -90,12 +91,18 @@ public:
                         {id + 1, n}});
             }
         }
+        if (!id.empty()) {
+            stsInstances_[id] = this;
+        }
     }
     ~STS() {
         for (auto& taskList : threadSubTasks_) {
             for (SubTask *t : taskList) {
                 delete t;
             }
+        }
+        if (!id.empty()) {
+            stsInstances_.erase(id);
         }
     }
     /*! \brief
@@ -235,11 +242,32 @@ public:
         instance_ = defaultInstance_;
     }
     /*! \brief
-     * Returns the currently running STS instance (or nullptr if none)
+     * Returns STS instance for a given id or nullptr if not found
      *
+     * \param[in] STS instance id
      * \returns STS instance
      */
-    static STS *getInstance() { return instance_; }
+    static STS *getInstance(std::string id) {
+        auto entry = stsInstances_.find(id);
+        if (entry == stsInstances_.end()) {
+            return defaultInstance_;
+        }
+        else {
+            return entry->second;
+        }
+    }
+    /*! \brief
+     * Returns current STS instance
+     *
+     * WARNING: meant only  for internal use. Applications should use
+     * "getInstance" for better error checking and clarity when using
+     * multiple STS instances.
+     *
+     * \returns current STS instance
+     */
+    static STS *getCurrentInstance() {
+        return instance_;
+    }
     /*! \brief
      * Returns the task functor for a given task Id
      *
@@ -404,6 +432,7 @@ private:
     static std::deque<Thread> threads_;
     static std::atomic<int> stepCounter_;
     static STS *defaultInstance_;
+    static std::map<std::string, STS *> stsInstances_;
     static STS *instance_;
 };
 

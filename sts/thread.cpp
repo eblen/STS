@@ -27,7 +27,7 @@ void Thread::doWork() {
 }
 
 void Thread::processQueue() {
-    unsigned int s = STS::getInstance()->getNumSubTasks(Thread::id_);
+    unsigned int s = STS::getCurrentInstance()->getNumSubTasks(Thread::id_);
     while(nextSubtaskId_<s) {
         processTask();
     }
@@ -35,13 +35,13 @@ void Thread::processQueue() {
 }
 
 void Thread::processTask() {
-    SubTask* subtask = STS::getInstance()->getSubTask(Thread::id_, nextSubtaskId_++);
+    SubTask* subtask = STS::getCurrentInstance()->getSubTask(Thread::id_, nextSubtaskId_++);
     auto startWaitTime = sts_clock::now();
-    ITaskFunctor *task = STS::getInstance()->getTaskFunctor(subtask->getTaskId());
+    ITaskFunctor *task = STS::getCurrentInstance()->getTaskFunctor(subtask->getTaskId());
     auto startTaskTime = sts_clock::now();
     subtask->waitTime_ = startTaskTime - startWaitTime;
     task->run(subtask->getRange());
     subtask->runTime_ = sts_clock::now() - startTaskTime;
-    STS::getInstance()->markSubtaskComplete(subtask->getTaskId());
+    STS::getCurrentInstance()->markSubtaskComplete(subtask->getTaskId());
 }
 

@@ -65,7 +65,15 @@ public:
         for (int id = 0; id < numThreads; id++) {
             threads_.emplace_back(id); //create threads
         }
-        defaultInstance_ = new STS();
+        // Create the default STS instance, which uses a default schedule.
+        // Users cannot create an instance with the default schedule but can
+        // use this default instance as a quick way to parallelize loops.
+        defaultInstance_ = new STS("default");
+        for (int id = 0; id < numThreads; id++) {
+            defaultInstance_->assign("default", id, {{id, numThreads},
+                                                    {id + 1, numThreads}});
+        }
+        defaultInstance_->bUseDefaultSchedule_ = true;
         instance_ = defaultInstance_;
     }
     /*! \brief
@@ -85,12 +93,6 @@ public:
         int n = getNumThreads();
         assert(n > 0);
         threadSubTasks_.resize(n);
-        if (bUseDefaultSchedule_) {
-            for (int id = 0; id < n; id++) {
-                assign("default", id, {{id, n},
-                        {id + 1, n}});
-            }
-        }
         if (!id.empty()) {
             stsInstances_[id] = this;
         }
@@ -129,7 +131,6 @@ public:
         SubTask *t = new SubTask(id, range);
         threadSubTasks_[threadId].push_back(t);
         tasks_[id].pushSubtask(threadId, t);
-        bUseDefaultSchedule_ = false;
     }
     //! Clear all assignments
     void clearAssignments() {
@@ -143,7 +144,7 @@ public:
     //! Notify threads to start computing the next step
     void nextStep() {
         assert(Thread::getId()==0);
-        assert(instance_ == defaultInstance_);
+        assert(instance_->bUseDefaultSchedule_ == true);
         instance_ = this;
         for (auto &task: tasks_) {
             task.functor_ = nullptr;
@@ -180,8 +181,9 @@ public:
     template<typename F, typename T=int>
     void parallel_for(std::string label, int64_t start, int64_t end, F body, TaskReduction<T> *red = nullptr) {
         assert(this == instance_);
-        int taskId = 0;
+        int taskId = -1;
         if (bUseDefaultSchedule_) {
+            taskId = 0;
             nextStep(); //Default schedule has only a single step and the user doesn't need to call nextStep
             assert(getTaskId("default")==taskId);
         } else if (!isTaskAssigned(label)) {
@@ -207,12 +209,18 @@ public:
         auto startWaitTime = sts_clock::now();
         task.functorEndBarrier_.wait();
         task.waitTime_ = sts_clock::now() - startWaitTime;
-
         // TODO: A smarter reduction would take place before the above wait.
         if (task.reduction_ != nullptr) {
             auto startReductionTime = sts_clock::now();
             static_cast< TaskReduction<T> *>(task.reduction_)->reduce();
             task.reductionTime_ = sts_clock::now() - startReductionTime;
+        }
+        // User does not need to call wait for default scheduling
+        if (bUseDefaultSchedule_) {
+            wait();
+            // Calling wait sets the current instance to default, which we
+            // don't want to do internally but only at user level.
+            instance_ = this;
         }
     }
     //! Automatically compute new schedule based on previous step timing
@@ -222,20 +230,18 @@ public:
     //! Wait on all tasks to finish
     void wait() {
         assert(this == instance_);
-        if (!bUseDefaultSchedule_) {
-            threads_[0].processQueue(); //Before waiting the OS thread executes its queue
-            for(unsigned int i=1;i<tasks_.size();i++) {
-                tasks_[i].functorEndBarrier_.wait();
-            }
-            if (bSTSDebug_) {
-                for (const auto &t : tasks_) {
-                    for (const auto &st : t.subtasks_) {
-                        auto wtime = std::chrono::duration_cast<std::chrono::microseconds>(st->waitTime_).count();
-                        auto rtime = std::chrono::duration_cast<std::chrono::microseconds>(st->runTime_).count();
-                    }
-                    if (t.subtasks_.size() > 1) {
-                        auto ltwtime = std::chrono::duration_cast<std::chrono::microseconds>(t.waitTime_).count();
-                    }
+        threads_[0].processQueue(); //Before waiting the OS thread executes its queue
+        for(unsigned int i=1;i<tasks_.size();i++) {
+            tasks_[i].functorEndBarrier_.wait();
+        }
+        if (bSTSDebug_) {
+            for (const auto &t : tasks_) {
+                for (const auto &st : t.subtasks_) {
+                    auto wtime = std::chrono::duration_cast<std::chrono::microseconds>(st->waitTime_).count();
+                    auto rtime = std::chrono::duration_cast<std::chrono::microseconds>(st->runTime_).count();
+                }
+                if (t.subtasks_.size() > 1) {
+                    auto ltwtime = std::chrono::duration_cast<std::chrono::microseconds>(t.waitTime_).count();
                 }
             }
         }
@@ -427,7 +433,7 @@ private:
     std::deque<Task>  tasks_;  //It is essential this isn't a vector (doesn't get moved when resizing). Is this ok to be a list (linear) or does it need to be a tree? A serial task isn't before a loop. It is both before and after.
     std::map<std::string,int> taskLabels_;
     std::vector< std::vector<SubTask *> > threadSubTasks_;
-    bool bUseDefaultSchedule_ = true;
+    bool bUseDefaultSchedule_ = false;
     bool bSTSDebug_ = true;
     static std::deque<Thread> threads_;
     static std::atomic<int> stepCounter_;

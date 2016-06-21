@@ -37,7 +37,6 @@ public:
         if (id!=0) {
             thread_.reset(new std::thread([=](){id_=id; doWork();}));
         }
-        setAffinity(id);
     }
     Thread(Thread&&) = delete; //nextSubtaskId_ access would not be thread-safe
     Thread& operator=(Thread&&) = delete;
@@ -66,7 +65,6 @@ public:
     }
 private:
     void doWork(); //function executed by worker threads
-    void setAffinity(int coreId);
 
     unsigned int nextSubtaskId_ = 0;
     std::unique_ptr<std::thread> thread_;

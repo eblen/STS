@@ -60,8 +60,12 @@ public:
      * No STS functions should be called before Startup.
      */
     static void startup(int numThreads) {
-        assert(threads_.size() == 0);
         assert(numThreads > 0);
+        // Allow multiple calls but make sure thread count is the same for all.
+        if (threads_.size() > 0) {
+            assert(numThreads == threads_.size());
+            return;
+        }
         for (int id = 0; id < numThreads; id++) {
             threads_.emplace_back(id); //create threads
         }
@@ -111,7 +115,9 @@ public:
      * Get number of threads in the pool
      */
     static int getNumThreads() {
-        return threads_.size();
+        auto n = threads_.size();
+        assert(n > 0);
+        return n;
     }
     /*! \brief
      * Assign task to a thread
@@ -313,8 +319,7 @@ public:
      * \return number of threads
      */
     int getTaskNumThreads(std::string label) {
-        // TODO: Handle case where label is not a valid task.
-        // Currently, it will insert a new task!
+        assert(isTaskAssigned(label));
         int taskId = getTaskId(label);
         return tasks_[taskId].getNumThreads();
     }

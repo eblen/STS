@@ -254,7 +254,7 @@ public:
         instance_ = defaultInstance_;
     }
     /*! \brief
-     * Returns STS instance for a given id or nullptr if not found
+     * Returns STS instance for a given id or default instance if not found
      *
      * \param[in] STS instance id
      * \returns STS instance

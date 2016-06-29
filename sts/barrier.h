@@ -3,7 +3,9 @@
 
 #include <cassert>
 
+#include <string>
 #include <atomic>
+#include <map>
 
 /*
  * Functions for spin waiting
@@ -91,4 +93,56 @@ private:
     std::atomic_int numThreadsRemaining;
 };
 
+/*! \brief
+ * A simple many-to-many (MM) barrier.
+ *
+ * This is a reusable barrier and so works inside loops.
+ * It assumes a fixed set of exactly nt threads.
+ */
+class MMBarrier {
+public:
+    MMBarrier(int nt, std::string name = "") :id(name), nthreads(nt),
+                                            numWaitingThreads(0),
+                                            numReleasedThreads(0) {
+        assert(nt > 0);
+        if (!id.empty()) {
+            barrierInstances_[id] = this;
+        }
+    }
+    void enter() {
+        wait_until(numReleasedThreads, 0);
+        numWaitingThreads.fetch_add(1);
+        wait_until(numWaitingThreads, nthreads);
+        if (numReleasedThreads.fetch_add(1) == nthreads-1) {
+            numWaitingThreads.store(0);
+            numReleasedThreads.store(0);
+        }
+    }
+    std::string getId() {
+        return id;
+    }
+    /*! \brief
+     * Returns MMBarrier instance for a given id or nullptr if not found
+     *
+     * \param[in] MMBarrier instance id
+     * \returns MMBarrier instance
+     */
+    static MMBarrier *getInstance(std::string id) {
+        auto entry = barrierInstances_.find(id);
+        if (entry == barrierInstances_.end()) {
+            return nullptr;
+        }
+        else {
+            return entry->second;
+        }
+    }
+private:
+    std::string id;
+    const int nthreads;
+    std::atomic<int>  numWaitingThreads;
+    std::atomic<int>  numReleasedThreads;
+    static std::map<std::string, MMBarrier *> barrierInstances_;
+};
+
 #endif // STS_BARRIER_H
+

@@ -1,6 +1,6 @@
 #include <cmath>
 
-#include "barrier.h"
+#include "sts/barrier.h"
 #include "sts/sts.h"
 
 const int nsteps = 10;
@@ -12,7 +12,7 @@ float B[size] = {0};
 STS *sts;
 
 void do_something_A(int i) {
-    static Barrier b(nthreads);
+    static MMBarrier b(nthreads);
     A[i] = 1;
     int j = (i + size / nthreads) % size;
     b.enter();

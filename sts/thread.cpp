@@ -25,11 +25,13 @@ void Thread::processQueue() {
 void Thread::processTask() {
     SubTask* subtask = STS::getCurrentInstance()->getSubTask(Thread::id_, nextSubtaskId_++);
     auto startWaitTime = sts_clock::now();
-    ITaskFunctor *task = STS::getCurrentInstance()->getTaskFunctor(subtask->getTaskId());
+    task = STS::getCurrentInstance()->getTaskFunctor(subtask->getTaskId());
     auto startTaskTime = sts_clock::now();
     subtask->waitTime_ = startTaskTime - startWaitTime;
     task->run(subtask->getRange());
     subtask->runTime_ = sts_clock::now() - startTaskTime;
+    delete task;
+    task = nullptr;
     STS::getCurrentInstance()->markSubtaskComplete(subtask->getTaskId());
 }
 

@@ -229,6 +229,24 @@ public:
             instance_ = this;
         }
     }
+    /*
+     * Wrapper for entering barriers to support extra logic.
+     * For example, threads should only enter a barrier on the final iteration of a parallel_for.
+     * This is almost always (always?) the correct behavior. If other behaviors are ever needed,
+     * barriers can still be used directly, or this function can be modified.
+     *
+     * \param[in] barrier  Barrier to enter
+     */
+    static void enterBarrier(MMBarrier *barrier) {
+        if (barrier->getId() == "fft") std::cerr << Thread::getId() << "*" << std::endl;
+        auto &thread = threads_[Thread::getId()];
+        const ITaskFunctor* task = thread.getCurrentSubTask();
+        assert(task != nullptr);
+        if (task->getIter() == task->getRange().end - 1) {
+            if (barrier->getId() == "fft") std::cerr << Thread::getId() << "$" << std::endl;
+            barrier->enter();
+        }
+    }
     //! Automatically compute new schedule based on previous step timing
     void reschedule() {
         // not yet available
@@ -281,16 +299,16 @@ public:
         return instance_;
     }
     /*! \brief
-     * Returns the task functor for a given task Id
+     * Returns a copy of the task functor for a given task Id
      *
      * Waits on functor to be ready if the corresponding run()/parallel_for() hasn't been executed yet.
      *
      * \param[in] task Id
      * \returns task functor
      */
-    ITaskFunctor *getTaskFunctor(int taskId) {
+    ITaskFunctor* getTaskFunctor(int taskId) {
         tasks_[taskId].functorBeginBarrier_.wait();
-        return tasks_[taskId].functor_;
+        return tasks_[taskId].functor_->clone();
     }
     SubTask *getSubTask(int threadId, int subTaskId) const {
         return threadSubTasks_[threadId][subTaskId];

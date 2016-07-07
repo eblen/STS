@@ -17,7 +17,7 @@ public:
     explicit Range(T e) : start(0), end(e) {}
     template<class R>
     operator Range<R>() { return Range<R>(start, end); }
-    Range<T> subset(Range<Ratio> p) {
+    Range<T> subset(Range<Ratio> p) const {
         Range<T> r = p * (end - start);
         return r + start;
     }

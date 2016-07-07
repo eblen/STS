@@ -18,7 +18,10 @@ public:
      *
      * \param[in] range  range of task to be executed. Ignored for basic task.
      */
-    virtual void run(Range<Ratio> range) = 0;
+    virtual ITaskFunctor* clone() const              = 0;
+    virtual void run(Range<Ratio> range)             = 0;
+    virtual Range<int64_t> getRange() const          = 0;
+    virtual int64_t getIter() const                  = 0;
     virtual ~ITaskFunctor() {};
 };
 
@@ -32,16 +35,30 @@ public:
      * \param[in] f    lambda of loop body
      * \param[in] r    range of loop
      */
-    LoopTaskFunctor<F>(F f, Range<int64_t> r): body_(f), range_(r) {}
+    LoopTaskFunctor<F>(const F f, Range<int64_t> r) : body_(f), range_(r),
+                                                      subrange_(r), iter_(-1) {}
+    ITaskFunctor* clone() const {
+        // Disallow cloning a running or completed task.
+        assert(iter_ == -1);
+        return new LoopTaskFunctor(*this);
+    }
     void run(Range<Ratio> r) {
-        Range<int64_t> s = range_.subset(r); //compute sub-range of this execution
-        for (int i=s.start; i<s.end; i++) {
-            body_(i);
+        subrange_ = range_.subset(r); //compute sub-range of this execution
+        for (iter_=subrange_.start; iter_<subrange_.end; iter_++) {
+            body_(iter_);
         }
     }
+    Range<int64_t> getRange() const {
+        return subrange_;
+    }
+    int64_t getIter() const {
+        return iter_;
+    }
 private:
-    F body_;
-    Range<int64_t> range_;
+    const F body_;
+    const Range<int64_t> range_;
+    Range<int64_t> subrange_;
+    int iter_;
 };
 
 //! Basic (non-loop) task functor
@@ -53,12 +70,26 @@ public:
      *
      * \param[in] f    lambda of function
      */
-    BasicTaskFunctor<F>(F f) : func_(f) {};
+    BasicTaskFunctor<F>(const F f) : func_(f), iter_(-1) {};
+    ITaskFunctor* clone() const {
+        // Disallow cloning a running or completed task.
+        assert(iter_ == -1);
+        return new BasicTaskFunctor(*this);
+    }
     void run(Range<Ratio>) {
+        iter_ = 0;
         func_();
+        iter_ = 1;
+    }
+    Range<int64_t> getRange() const {
+        return Range<int64_t>(1);
+    }
+    int64_t getIter() const {
+        return iter_;
     }
 private:
-    F func_;
+    const F func_;
+    int iter_;
 };
 
 /*! \brief

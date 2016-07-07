@@ -60,13 +60,17 @@ public:
      * \returns thread Id
      */
     static int getId() { return id_; }
-    int getCurrentSubTaskId() {
+    int getCurrentSubTaskId() const {
         return nextSubtaskId_ - 1;
+    }
+    const ITaskFunctor* getCurrentSubTask() const {
+        return task;
     }
 private:
     void doWork(); //function executed by worker threads
 
     unsigned int nextSubtaskId_ = 0;
+    ITaskFunctor* task = nullptr;
     std::unique_ptr<std::thread> thread_;
     static thread_local int id_;
 };

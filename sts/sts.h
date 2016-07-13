@@ -229,6 +229,12 @@ public:
             instance_ = this;
         }
     }
+    void skip_run(std::string label) {
+        run(label, []{});
+    }
+    void skip_loop(std::string label) {
+        parallel_for(label, 0, 0, [](int i){});
+    }
     //! Automatically compute new schedule based on previous step timing
     void reschedule() {
         // not yet available

@@ -70,14 +70,9 @@ public:
             threads_.emplace_back(id); //create threads
         }
         // Create the default STS instance, which uses a default schedule.
-        // Users cannot create an instance with the default schedule but can
-        // use this default instance as a quick way to parallelize loops.
+        // This schedule provides a quick way to parallelize loops.
         defaultInstance_ = new STS("default");
-        for (int id = 0; id < numThreads; id++) {
-            defaultInstance_->assign("default", id, {{id, numThreads},
-                                                    {id + 1, numThreads}});
-        }
-        defaultInstance_->bUseDefaultSchedule_ = true;
+        defaultInstance_->setDefaultSchedule();
         instance_ = defaultInstance_;
     }
     /*! \brief
@@ -147,17 +142,13 @@ public:
             task.clearSubtasks();
         }
     }
-    //! Notify threads to start computing the next step
-    void nextStep() {
-        assert(Thread::getId()==0);
-        assert(instance_->bUseDefaultSchedule_ == true);
-        instance_ = this;
-        for (auto &task: tasks_) {
-            task.functor_ = nullptr;
-            task.functorBeginBarrier_.close();
-            task.functorEndBarrier_.close(task.getNumThreads());
+    void setDefaultSchedule() {
+        bUseDefaultSchedule_ = true;
+        clearAssignments();
+        int numThreads = getNumThreads();
+        for (int id = 0; id < numThreads; id++) {
+            assign("default", id, {{id, numThreads}, {id + 1, numThreads}});
         }
-        stepCounter_.fetch_add(1, std::memory_order_release);
     }
     /*! \brief
      * Run an asynchronous function
@@ -167,12 +158,28 @@ public:
      */
     template<typename F>
     void run(std::string label, F function) {
-        assert(this == instance_);
+        if (!bUseDefaultSchedule_) {
+            assert(this == instance_);
+            // Cannot invoke an instance that is inactive
+            // (nextStep has not been called)
+            assert(instance_->isActive_ == true);
+        }
+        else {
+            // Instances with a default schedule can be run at any time except
+            // in the middle of an active schedule.
+            assert(instance_->isActive_ == false);
+        }
         if (!isTaskAssigned(label) || bUseDefaultSchedule_) {
             function();
         } else {
             tasks_[getTaskId(label)].functor_ = new BasicTaskFunctor<F>(function);
             tasks_[getTaskId(label)].functorBeginBarrier_.open();
+        }
+    }
+    //! Notify threads to start computing the next step
+    void nextStep() {
+        if (!bUseDefaultSchedule_) {
+            nextStepInternal();
         }
     }
     /*! \brief
@@ -186,11 +193,21 @@ public:
      */
     template<typename F, typename T=int>
     void parallel_for(std::string label, int64_t start, int64_t end, F body, TaskReduction<T> *red = nullptr) {
-        assert(this == instance_);
+        if (!bUseDefaultSchedule_) {
+            assert(this == instance_);
+            // Cannot invoke an instance that is inactive
+            // (nextStep has not been called)
+            assert(instance_->isActive_ == true);
+        }
+        else {
+            // Instances with a default schedule can be run at any time except
+            // in the middle of an active schedule.
+            assert(instance_->isActive_ == false);
+        }
         int taskId = -1;
         if (bUseDefaultSchedule_) {
             taskId = 0;
-            nextStep(); //Default schedule has only a single step and the user doesn't need to call nextStep
+            nextStepInternal(); //Default schedule has only a single step and the user doesn't need to call nextStep
             assert(getTaskId("default")==taskId);
         } else if (!isTaskAssigned(label)) {
             for (int i=start; i<end; i++) {
@@ -223,10 +240,7 @@ public:
         }
         // User does not need to call wait for default scheduling
         if (bUseDefaultSchedule_) {
-            wait();
-            // Calling wait sets the current instance to default, which we
-            // don't want to do internally but only at user level.
-            instance_ = this;
+            waitInternal();
         }
     }
     void skip_run(std::string label) {
@@ -241,23 +255,9 @@ public:
     }
     //! Wait on all tasks to finish
     void wait() {
-        assert(this == instance_);
-        threads_[0].processQueue(); //Before waiting the OS thread executes its queue
-        for(unsigned int i=1;i<tasks_.size();i++) {
-            tasks_[i].functorEndBarrier_.wait();
+        if (!bUseDefaultSchedule_) {
+            waitInternal();
         }
-        if (bSTSDebug_) {
-            for (const auto &t : tasks_) {
-                for (const auto &st : t.subtasks_) {
-                    auto wtime = std::chrono::duration_cast<std::chrono::microseconds>(st->waitTime_).count();
-                    auto rtime = std::chrono::duration_cast<std::chrono::microseconds>(st->runTime_).count();
-                }
-                if (t.subtasks_.size() > 1) {
-                    auto ltwtime = std::chrono::duration_cast<std::chrono::microseconds>(t.waitTime_).count();
-                }
-            }
-        }
-        instance_ = defaultInstance_;
     }
     /*! \brief
      * Returns STS instance for a given id or default instance if not found
@@ -441,10 +441,60 @@ private:
         }
         (static_cast<TaskReduction<T> *>(t->reduction_))->collect(a, ttid);
     }
+    //! Notify threads to start computing the next step
+    void nextStepInternal() {
+        assert(Thread::getId()==0);
+        assert(instance_->bUseDefaultSchedule_ == true);
+        // Allow multiple calls, but ignore if schedule is active.
+        if (isActive_) {
+            assert(instance_ == this);
+            return;
+        }
+        // Cannot swap out an active schedule (call wait first)
+        assert(instance_->isActive_ == false);
+        instance_ = this;
+        isActive_ = true;
+        for (auto &task: tasks_) {
+            task.functor_ = nullptr;
+            task.functorBeginBarrier_.close();
+            task.functorEndBarrier_.close(task.getNumThreads());
+        }
+
+        // Increment counter only
+        stepCounter_.fetch_add(1, std::memory_order_release);
+    }
+    //! Wait on all tasks to finish
+    void waitInternal() {
+        assert(Thread::getId()==0);
+        assert(this == instance_);
+        // Allow multiple calls, but ignore if schedule is not active.
+        if (!isActive_) {
+            return;
+        }
+        threads_[0].processQueue(); //Before waiting the OS thread executes its queue
+        for(unsigned int i=1;i<tasks_.size();i++) {
+            tasks_[i].functorEndBarrier_.wait();
+        }
+        if (bSTSDebug_) {
+            for (const auto &t : tasks_) {
+                for (const auto &st : t.subtasks_) {
+                    auto wtime = std::chrono::duration_cast<std::chrono::microseconds>(st->waitTime_).count();
+                    auto rtime = std::chrono::duration_cast<std::chrono::microseconds>(st->runTime_).count();
+                }
+                if (t.subtasks_.size() > 1) {
+                    auto ltwtime = std::chrono::duration_cast<std::chrono::microseconds>(t.waitTime_).count();
+                }
+            }
+        }
+        isActive_ = false;
+        instance_ = defaultInstance_;
+    }
     std::deque<Task>  tasks_;  //It is essential this isn't a vector (doesn't get moved when resizing). Is this ok to be a list (linear) or does it need to be a tree? A serial task isn't before a loop. It is both before and after.
     std::map<std::string,int> taskLabels_;
     std::vector< std::vector<SubTask *> > threadSubTasks_;
     bool bUseDefaultSchedule_ = false;
+    // "Active" means schedule is between nextStep and wait calls.
+    bool isActive_ = false;
     bool bSTSDebug_ = true;
     static std::deque<Thread> threads_;
     static std::atomic<int> stepCounter_;

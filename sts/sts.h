@@ -3,14 +3,15 @@
 
 #include <cassert>
 
-#include <atomic>
 #include <deque>
-#include <map>
-#include <vector>
-#include <string>
-#include <chrono>
 #include <iostream>
+#include <map>
 #include <memory>
+#include <string>
+#include <vector>
+
+#include <atomic>
+#include <chrono>
 
 #include "range.h"
 #include "reduce.h"
@@ -39,7 +40,7 @@
  * specified. The whole design is lock free and only relies on atomics.
  */
 
-/*! \brief
+/*! \internal \brief
  * Static task scheduler
  *
  * Allows running an asynchronous function with run() and execute loops in parallel
@@ -54,19 +55,24 @@
  */
 class STS {
 public:
+    /*! \brief Schedule Id
+     *
+     * Can be used to retrieve schedules with getInstance() rather than storing
+     * them in the application code.
+     */
     const std::string id;
     /*! \brief
      * Startup STS and set the number of threads.
      * No STS functions should be called before Startup.
      */
-    static void startup(int numThreads) {
+    static void startup(size_t numThreads) {
         assert(numThreads > 0);
         // Allow multiple calls but make sure thread count is the same for all.
         if (threads_.size() > 0) {
             assert(numThreads == threads_.size());
             return;
         }
-        for (int id = 0; id < numThreads; id++) {
+        for (size_t id = 0; id < numThreads; id++) {
             threads_.emplace_back(id); //create threads
         }
         // Create the default STS instance, which uses a default schedule.
@@ -88,7 +94,12 @@ public:
         }
         delete defaultInstance_;
     }
-    STS(std::string name = "") :id(name) {
+    /*! \brief
+     * Constructs a new STS schedule
+     *
+     * \param[in] name  optional name for schedule
+     */
+    STS(std::string name = "") :id(name), bUseDefaultSchedule_(false), isActive_(false) {
         int n = getNumThreads();
         assert(n > 0);
         threadSubTasks_.resize(n);
@@ -133,7 +144,7 @@ public:
         threadSubTasks_[threadId].push_back(t);
         tasks_[id].pushSubtask(threadId, t);
     }
-    //! Clear all assignments
+    //! \brief Clear all assignments
     void clearAssignments() {
         for (auto &taskList : threadSubTasks_) {
             taskList.clear();
@@ -142,6 +153,12 @@ public:
             task.clearSubtasks();
         }
     }
+    /*! \brief
+     * Set the default schedule
+     *
+     * All previous assignments are cleared. Loops are divided evenly among all threads and
+     * non-loop tasks simply run on the invoking thread,
+     */
     void setDefaultSchedule() {
         bUseDefaultSchedule_ = true;
         clearAssignments();
@@ -206,9 +223,10 @@ public:
         }
         int taskId = -1;
         if (bUseDefaultSchedule_) {
-            taskId = 0;
-            nextStepInternal(); //Default schedule has only a single step and the user doesn't need to call nextStep
-            assert(getTaskId("default")==taskId);
+            assert(isTaskAssigned("default"));
+            taskId = getTaskId("default");
+            assert(taskId == 0); // Default schedule should have only the "default" task with id 0.
+            nextStepInternal();  // Default schedule has only a single step and the user doesn't need to call nextStep
         } else if (!isTaskAssigned(label)) {
             for (int i=start; i<end; i++) {
                 body(i);
@@ -226,8 +244,7 @@ public:
         task.functorBeginBarrier_.open();
         auto &thread = threads_[Thread::getId()];
         //Calling processTask implies that the thread calling parallel_for participates in the loop and executes it next in queue
-        int nextSubTaskId = thread.getCurrentSubTaskId() + 1;
-        assert(getSubTask(Thread::getId(), nextSubTaskId)->getTaskId() == taskId);
+        assert(getSubTask(Thread::getId(), thread.getCurrentSubTaskId() + 1)->getTaskId() == taskId);
         thread.processTask();
         auto startWaitTime = sts_clock::now();
         task.functorEndBarrier_.wait();
@@ -243,15 +260,36 @@ public:
             waitInternal();
         }
     }
+    /*! \brief
+     * Skip the given run task.
+     *
+     * This is useful when an assigned task should not run under certain conditions.
+     *
+     * \param[in] label  task label
+     */
     void skip_run(std::string label) {
         run(label, []{});
     }
+    /*! \brief
+     * Skip the given loop task.
+     *
+     * This is useful when an assigned task should not run under certain conditions.
+     *
+     * \param[in] label  task label
+     */
     void skip_loop(std::string label) {
-        parallel_for(label, 0, 0, [](int i){});
+        // Return i to avoid compiler warnings about an unused parameter
+        parallel_for(label, 0, 0, [](int i){return i;});
     }
     //! Automatically compute new schedule based on previous step timing
     void reschedule() {
         // not yet available
+    }
+    //! Wait for specific task to finish
+    void waitForTask(std::string label) {
+        assert(isTaskAssigned(label));
+        int t = getTaskId(label);
+        tasks_[t].functorEndBarrier_.wait();
     }
     //! Wait on all tasks to finish
     void wait() {
@@ -262,7 +300,7 @@ public:
     /*! \brief
      * Returns STS instance for a given id or default instance if not found
      *
-     * \param[in] STS instance id
+     * \param[in] id  STS instance Id
      * \returns STS instance
      */
     static STS *getInstance(std::string id) {
@@ -277,7 +315,7 @@ public:
     /*! \brief
      * Returns current STS instance
      *
-     * WARNING: meant only  for internal use. Applications should use
+     * WARNING: meant only for internal use. Applications should use
      * "getInstance" for better error checking and clarity when using
      * multiple STS instances.
      *
@@ -291,23 +329,39 @@ public:
      *
      * Waits on functor to be ready if the corresponding run()/parallel_for() hasn't been executed yet.
      *
-     * \param[in] task Id
+     * \param[in] taskId  task Id
      * \returns task functor
      */
     ITaskFunctor *getTaskFunctor(int taskId) {
         tasks_[taskId].functorBeginBarrier_.wait();
         return tasks_[taskId].functor_;
     }
+    /*! \brief
+     * Get a specific subtask assigned to a specific thread
+     *
+     * \param[in] threadId   Thread Id
+     * \param[in] subTaskId  subtask Id
+     */
     SubTask *getSubTask(int threadId, int subTaskId) const {
         return threadSubTasks_[threadId][subTaskId];
     }
+    /*! \brief
+     * Get number of subtasks assigned to a thread
+     *
+     * \param[in] threadId  Thread Id
+     */
     int getNumSubTasks(int threadId) const {
         return threadSubTasks_[threadId].size();
     }
+    /*! \brief
+     * Mark that this thread has completed its assigned subtask for task taskId
+     *
+     * \param[in] taskId  Task Id
+     */
     void markSubtaskComplete(int taskId) {
         tasks_[taskId].functorEndBarrier_.markArrival();
     }
-    /* \brief
+    /*! \brief
      * Get number of threads for current task or 0 if no current task
      *
      * \return number of threads or 0 if no current task
@@ -319,9 +373,10 @@ public:
         }
         return t->getNumThreads();
     }
-    /* \brief
+    /*! \brief
      * Get number of threads for a given task
      *
+     * \param[in] label  task label
      * \return number of threads
      */
     int getTaskNumThreads(std::string label) {
@@ -329,7 +384,7 @@ public:
         int taskId = getTaskId(label);
         return tasks_[taskId].getNumThreads();
     }
-    /* \brief
+    /*! \brief
      * Get thread's id for its current task or -1
      *
      * \return thread task id or -1 if no current task
@@ -344,13 +399,13 @@ public:
         assert(ttid > -1);
         return ttid;
     }
-    /* \brief
+    /*! \brief
      * Load atomic step counter
      *
      * \returns step counter
      */
     static int loadStepCounter() { return stepCounter_.load(std::memory_order_acquire); }
-    /* \brief
+    /*! \brief
      * Wait on atomic step counter to change
      *
      * param[in] c   last step processed by thread
@@ -368,7 +423,7 @@ public:
     template<typename T>
     TaskReduction<T> createTaskReduction(std::string taskName, T init) {
         int numThreads = getTaskNumThreads(taskName);
-        return TaskReduction<T>(taskName, init, numThreads);
+        return TaskReduction<T>(init, numThreads);
     }
     /*! \brief
      * Collect a value for a task's reduction. Must be called within a task.
@@ -396,7 +451,7 @@ private:
         }
         return &tasks_[taskId];
     }
-    bool isTaskAssigned(std::string label) {
+    bool isTaskAssigned(std::string label) const {
         return (taskLabels_.find(label) != taskLabels_.end());
     }
     // Creates new ID for unknown label.
@@ -413,18 +468,6 @@ private:
             taskLabels_[label] = v;
             return v;
         }
-    }
-    /*! \brief
-     * Returns task label for task ID
-     *
-     * \param[in] id   task Id
-     * \returns        task label
-     */
-    std::string getTaskLabel(int id) const {
-        for (auto it: taskLabels_) {
-            if (it.second == id) return it.first;
-        }
-        throw std::invalid_argument("Invalid task Id: "+id);
     }
     /* \brief
      * Collect the given value for the current task for later reduction
@@ -475,27 +518,15 @@ private:
         for(unsigned int i=1;i<tasks_.size();i++) {
             tasks_[i].functorEndBarrier_.wait();
         }
-        if (bSTSDebug_) {
-            for (const auto &t : tasks_) {
-                for (const auto &st : t.subtasks_) {
-                    auto wtime = std::chrono::duration_cast<std::chrono::microseconds>(st->waitTime_).count();
-                    auto rtime = std::chrono::duration_cast<std::chrono::microseconds>(st->runTime_).count();
-                }
-                if (t.subtasks_.size() > 1) {
-                    auto ltwtime = std::chrono::duration_cast<std::chrono::microseconds>(t.waitTime_).count();
-                }
-            }
-        }
         isActive_ = false;
         instance_ = defaultInstance_;
     }
     std::deque<Task>  tasks_;  //It is essential this isn't a vector (doesn't get moved when resizing). Is this ok to be a list (linear) or does it need to be a tree? A serial task isn't before a loop. It is both before and after.
     std::map<std::string,int> taskLabels_;
     std::vector< std::vector<SubTask *> > threadSubTasks_;
-    bool bUseDefaultSchedule_ = false;
+    bool bUseDefaultSchedule_;
     // "Active" means schedule is between nextStep and wait calls.
-    bool isActive_ = false;
-    bool bSTSDebug_ = true;
+    bool isActive_;
     static std::deque<Thread> threads_;
     static std::atomic<int> stepCounter_;
     static STS *defaultInstance_;

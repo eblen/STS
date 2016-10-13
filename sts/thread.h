@@ -3,9 +3,10 @@
 
 #include <cassert>
 
-#include <atomic>
 #include <deque>
 #include <memory>
+
+#include <atomic>
 #include <thread>
 
 #include "range.h"
@@ -18,7 +19,7 @@
 #define thread_local __declspec(thread)
 #endif
 
-/*! \brief
+/*! \internal \brief
  * Every thread has one associated object of this type
  *
  * Both the OS created (master-) thread and all threads created by STS
@@ -33,12 +34,14 @@ public:
      *
      * \param[in] id   Id given to this thread. 0 is the OS thread.
      */
-    Thread(int id) {
+    Thread(int id) :nextSubtaskId_(0) {
         if (id!=0) {
             thread_.reset(new std::thread([=](){id_=id; doWork();}));
         }
     }
+    //! Disable move constructor
     Thread(Thread&&) = delete; //nextSubtaskId_ access would not be thread-safe
+    //! Disable move assignment
     Thread& operator=(Thread&&) = delete;
     /*! \brief
      * Execute the whole queue of subtasks
@@ -60,13 +63,14 @@ public:
      * \returns thread Id
      */
     static int getId() { return id_; }
+    //! \brief Return current subtask Id
     int getCurrentSubTaskId() {
         return nextSubtaskId_ - 1;
     }
 private:
     void doWork(); //function executed by worker threads
 
-    unsigned int nextSubtaskId_ = 0;
+    unsigned int nextSubtaskId_;
     std::unique_ptr<std::thread> thread_;
     static thread_local int id_;
 };

@@ -3,7 +3,7 @@
 
 #include <vector>
 
-/*!
+/*! \internal \brief
  * Reduction class and implementation for basic data types
  *
  * Use template specialization to implement reductions for other
@@ -25,18 +25,33 @@
 template<typename T>
 class TaskReduction {
 public:
-    TaskReduction(std::string taskName, T init, int numThreads) :result(init) {
+    /*! \brief
+     * Create a new task reduction
+     *
+     * \param[in] init        Initial value (0 for a sum of ints, 1 for a
+     *                                       product of ints, etc.)
+     * \param[in] numThreads  number of participating threads
+     */
+    TaskReduction(T init, int numThreads) :result(init) {
         values.resize(numThreads, init);
     }
+    /*! \brief
+     * Contribute a value
+     *
+     * \param[in] a    the value
+     * \param[in] pos  value position, normally a task-specific thread id
+     */
     void collect(T a, size_t pos) {
         values[pos] += a;
     }
     // TODO: Allow user to provide a custom reduction function
+    //! \brief Reduce the contributed values to the final result
     void reduce() {
         for (const T &i : values) {
             result += i;
         }
     }
+    //! Get result
     T getResult() {
         return result;
     }

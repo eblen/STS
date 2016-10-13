@@ -1,16 +1,17 @@
 #ifndef STS_TASK_H
 #define STS_TASK_H
 
-#include <chrono>
 #include <map>
 #include <vector>
 
-#include "range.h"
+#include <chrono>
+
 #include "barrier.h"
+#include "range.h"
 
 using sts_clock = std::chrono::steady_clock;
 
-//! Interface of the executable function of a task
+//! \internal Interface of the executable function of a task
 class ITaskFunctor {
 public:
     /*! \brief
@@ -22,7 +23,7 @@ public:
     virtual ~ITaskFunctor() {};
 };
 
-//! Loop task functor
+//! \internal Loop task functor
 template<class F>
 class LoopTaskFunctor : public ITaskFunctor {
 public:
@@ -44,7 +45,7 @@ private:
     Range<int64_t> range_;
 };
 
-//! Basic (non-loop) task functor
+//! \internal Basic (non-loop) task functor
 template<class F>
 class BasicTaskFunctor : public ITaskFunctor {
 public:
@@ -61,7 +62,7 @@ private:
     F func_;
 };
 
-/*! \brief
+/*! \internal \brief
  * The part of a task done by one thread
  *
  * Contains the input to a thread what to do (taskId_, range_) and the output
@@ -89,7 +90,7 @@ private:
     Range<Ratio> range_;           /**< Range (out of [0,1]) of loop part */
 };
 
-/*! \brief
+/*! \internal \brief
  * A task to be executed
  *
  * Can either be a function or loop. Depending on the schedule is
@@ -98,17 +99,23 @@ private:
  * the schedule, in serial or in parallel.
  */
 struct Task {
-    void *reduction_;
+    void *reduction_; //!< Reduction function to execute after task completes
     ITaskFunctor *functor_;      //!< The function/loop to execute
-    MOBarrier functorBeginBarrier_;
-    OMBarrier functorEndBarrier_;
+    MOBarrier functorBeginBarrier_; //!< Many-to-one barrier to sync threads at beginning of loop
+    OMBarrier functorEndBarrier_; //!< One-to-many barrier to sync threads at end of loop
     //! All subtasks of this task. One for each section of a loop. One for a basic task.
-    std::vector<SubTask const*> subtasks_;
+    std::vector<SubTask const*> subtasks_; //!< Subtasks to be executed by a single thread
     //!< The waiting time in the implied barrier at the end of a loop. Zero for basic task.
-    sts_clock::duration waitTime_;
-    sts_clock::duration reductionTime_;
+    sts_clock::duration waitTime_; //!< Time that main thread waits on end barrier
+    sts_clock::duration reductionTime_; //!< Time spent doing reduction
 
     Task() :reduction_(nullptr), functor_(nullptr), waitTime_(0), reductionTime_(0), numThreads_(0) {}
+    /*! \brief
+     * Add a new subtask for this task
+     *
+     * \param[in] threadId  thread to which this subtask is assigned
+     * \param[in] t         subtask
+     */
     void pushSubtask(int threadId, SubTask const* t) {
         subtasks_.push_back(t);
         if (threadTaskIds_.find(threadId) == threadTaskIds_.end()) {
@@ -116,14 +123,21 @@ struct Task {
             numThreads_++;
         }
     }
+    //! \brief Remove all subtasks for this task
     void clearSubtasks() {
         subtasks_.clear();
         threadTaskIds_.clear();
         numThreads_ = 0;
     }
+    //! \brief Get total number of threads assigned to some subtask for this task
     int getNumThreads() const {
         return numThreads_;
     }
+    /*! \brief
+     * Get task-specific thread Id for the given STS thread Id
+     *
+     * \param[in] threadId  STS thread id
+     */
     int getThreadId(int threadId) const {
         auto id = threadTaskIds_.find(threadId);
         if (id == threadTaskIds_.end()) {
@@ -133,7 +147,7 @@ struct Task {
     }
 private:
     int numThreads_;
-    //! Map global thread id to an id only for this task (task ids are consecutive starting from 0)
+    //! Map STS thread id to an id only for this task (task ids are consecutive starting from 0)
     std::map<int, int> threadTaskIds_;
 };
 

@@ -3,9 +3,10 @@
 
 #include <cassert>
 
-#include <string>
-#include <atomic>
 #include <map>
+#include <string>
+
+#include <atomic>
 
 /*
  * Functions for spin waiting
@@ -40,7 +41,7 @@ T wait_until_not(const A &a, T v) {
 
 // TODO: Asserts to check for wrong or multiple uses of barriers.
 
-/*! \brief
+/*! \internal \brief
  * A simple many-to-one (MO) barrier.
  */
 class MOBarrier {
@@ -64,7 +65,7 @@ private:
     std::atomic_bool isLocked;
 };
 
-/*! \brief
+/*! \internal \brief
  * A simple one-to-many (OM) barrier.
  */
 class OMBarrier {
@@ -93,7 +94,7 @@ private:
     std::atomic_int numThreadsRemaining;
 };
 
-/*! \brief
+/*! \internal \brief
  * A simple many-to-many (MM) barrier.
  *
  * This is a reusable barrier and so works inside loops.
@@ -101,6 +102,12 @@ private:
  */
 class MMBarrier {
 public:
+    /*! \brief
+     * Constructs a new many-to-many barrier.
+     *
+     * \param[in] nt    Number of threads
+     * \param[in] name  Barrier name
+     */
     MMBarrier(int nt, std::string name = "") :id(name), nthreads(nt),
                                             numWaitingThreads(0),
                                             numReleasedThreads(0) {
@@ -109,6 +116,7 @@ public:
             barrierInstances_[id] = this;
         }
     }
+    //! \brief Enter barrier
     void enter() {
         wait_until(numReleasedThreads, 0);
         numWaitingThreads.fetch_add(1);
@@ -118,13 +126,18 @@ public:
             numReleasedThreads.store(0);
         }
     }
+    /*! \brief
+     * Get barrier id (name)
+     *
+     * \returns barrier id (name)
+     */
     std::string getId() {
         return id;
     }
     /*! \brief
      * Returns MMBarrier instance for a given id or nullptr if not found
      *
-     * \param[in] MMBarrier instance id
+     * \param[in] id  MMBarrier instance id
      * \returns MMBarrier instance
      */
     static MMBarrier *getInstance(std::string id) {

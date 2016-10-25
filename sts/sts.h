@@ -243,17 +243,21 @@ public:
         task.functor_ = new LoopTaskFunctor<F>(body, {start, end});
         task.functorBeginBarrier_.open();
         auto &thread = threads_[Thread::getId()];
-        //Calling processTask implies that the thread calling parallel_for participates in the loop and executes it next in queue
-        assert(getSubTask(Thread::getId(), thread.getCurrentSubTaskId() + 1)->getTaskId() == taskId);
-        thread.processTask();
-        auto startWaitTime = sts_clock::now();
-        task.functorEndBarrier_.wait();
-        task.waitTime_ = sts_clock::now() - startWaitTime;
-        // TODO: A smarter reduction would take place before the above wait.
-        if (task.reduction_ != nullptr) {
-            auto startReductionTime = sts_clock::now();
-            static_cast< TaskReduction<T> *>(task.reduction_)->reduce();
-            task.reductionTime_ = sts_clock::now() - startReductionTime;
+        bool isMyNextTask = (getSubTask(Thread::getId(), thread.getCurrentSubTaskId() + 1)->getTaskId() == taskId);
+        // Calling thread should either be assigned to this loop as its next task, or it should be a dummy loop.
+        // Allowing the latter gives the main thread the ability to skip a single task and all of its nested loops.
+        assert((start == end) || isMyNextTask);
+        if (isMyNextTask) {
+            thread.processTask();
+            auto startWaitTime = sts_clock::now();
+            task.functorEndBarrier_.wait();
+            task.waitTime_ = sts_clock::now() - startWaitTime;
+            // TODO: A smarter reduction would take place before the above wait.
+            if (task.reduction_ != nullptr) {
+                auto startReductionTime = sts_clock::now();
+                static_cast< TaskReduction<T> *>(task.reduction_)->reduce();
+                task.reductionTime_ = sts_clock::now() - startReductionTime;
+            }
         }
         // User does not need to call wait for default scheduling
         if (bUseDefaultSchedule_) {

@@ -1,5 +1,3 @@
-#include <sched.h>
-
 #include "thread.h"
 
 #include "sts.h"

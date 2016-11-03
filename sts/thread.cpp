@@ -13,21 +13,24 @@ void Thread::doWork() {
 }
 
 void Thread::processQueue() {
-    unsigned int s = STS::getCurrentInstance()->getNumSubTasks(Thread::id_);
-    while(nextSubtaskId_<s) {
-        processTask();
-    }
-    nextSubtaskId_=0;
+    currentScheduleName_ = STS::getCurrentInstance()->id;
+    while(processTask());
+    assert(currentScheduleName_ == STS::getCurrentInstance()->id);
 }
 
-void Thread::processTask() {
-    SubTask* subtask = STS::getCurrentInstance()->getSubTask(Thread::id_, nextSubtaskId_++);
+bool Thread::processTask() {
+    STS* sts = STS::getCurrentInstance();
+    assert(currentScheduleName_ == sts->id);
+    SubTask* subtask = sts->AdvanceToNextSubTask(id_);
+    if (subtask == nullptr) {
+        return false;
+    }
     auto startWaitTime = sts_clock::now();
-    ITaskFunctor *task = STS::getCurrentInstance()->getTaskFunctor(subtask->getTaskId());
+    ITaskFunctor *task = sts->getTaskFunctor(subtask->getTaskId());
     auto startTaskTime = sts_clock::now();
     subtask->waitTime_ = startTaskTime - startWaitTime;
     task->run(subtask->getRange());
     subtask->runTime_ = sts_clock::now() - startTaskTime;
-    STS::getCurrentInstance()->markSubtaskComplete(subtask->getTaskId());
+    sts->markSubtaskComplete(subtask->getTaskId());
+    return true;
 }
-

@@ -67,14 +67,16 @@ public:
      */
     static void startup(size_t numThreads) {
         assert(numThreads > 0);
-        // Allow multiple calls but make sure thread count is the same for all.
-        if (threads_.size() > 0) {
-            assert(numThreads == threads_.size());
-            return;
-        }
+        assert(threads_.size() == 0); // Do not allow multiple calls
+
+        // Barrier must be initialized before creating threads
+        // First time the barrier is used, each non-main thread enters it twice
+        stepCounterBarrier_.close(2*(numThreads-1));
+
         for (size_t id = 0; id < numThreads; id++) {
             threads_.emplace_back(id); //create threads
         }
+
         // Create the default STS instance, which uses a default schedule.
         // This schedule provides a quick way to parallelize loops.
         defaultInstance_ = new STS("default");
@@ -89,7 +91,7 @@ public:
         assert(instance_ == defaultInstance_);
         //-1 notifies threads to finish
         stepCounter_.store(-1, std::memory_order_release);
-        for (unsigned int i=1;i<threads_.size();i++) {
+        for (unsigned int i=1;i<getNumThreads();i++) {
             threads_[i].join();
         }
         delete defaultInstance_;
@@ -106,6 +108,7 @@ public:
         if (!id.empty()) {
             stsInstances_[id] = this;
         }
+        nextSubTask_.resize(n, 0);
     }
     ~STS() {
         for (auto& taskList : threadSubTasks_) {
@@ -242,13 +245,18 @@ public:
         task.reduction_ = red;
         task.functor_ = new LoopTaskFunctor<F>(body, {start, end});
         task.functorBeginBarrier_.open();
-        auto &thread = threads_[Thread::getId()];
-        bool isMyNextTask = (getSubTask(Thread::getId(), thread.getCurrentSubTaskId() + 1)->getTaskId() == taskId);
+        int tid = Thread::getId();
+        int nst = nextSubTask_[tid];
+        SubTask *subtask = nullptr;
+        if (nst < getNumSubTasks(tid)) {
+            subtask = threadSubTasks_[tid][nst];
+        }
+        bool isMyNextTask = (subtask != nullptr) && (subtask->getTaskId() == taskId);
         // Calling thread should either be assigned to this loop as its next task, or it should be a dummy loop.
         // Allowing the latter gives the main thread the ability to skip a single task and all of its nested loops.
         assert((start == end) || isMyNextTask);
         if (isMyNextTask) {
-            thread.processTask();
+            assert(threads_[tid].processTask()); // false return value contradicts previous assertion
             auto startWaitTime = sts_clock::now();
             task.functorEndBarrier_.wait();
             task.waitTime_ = sts_clock::now() - startWaitTime;
@@ -341,13 +349,20 @@ public:
         return tasks_[taskId].functor_;
     }
     /*! \brief
-     * Get a specific subtask assigned to a specific thread
+     * Advances to and returns the next subtask for the given thread
      *
      * \param[in] threadId   Thread Id
      * \param[in] subTaskId  subtask Id
+     * \returns pointer to thread's next subtask
      */
-    SubTask *getSubTask(int threadId, int subTaskId) const {
-        return threadSubTasks_[threadId][subTaskId];
+    SubTask *AdvanceToNextSubTask(int threadId) {
+        int st = nextSubTask_[threadId]++;
+        if (st >= getNumSubTasks(threadId)) {
+            return nullptr;
+        }
+        else {
+            return threadSubTasks_[threadId][st];
+        }
     }
     /*! \brief
      * Get number of subtasks assigned to a thread
@@ -414,7 +429,10 @@ public:
      *
      * param[in] c   last step processed by thread
      */
-    static int waitOnStepCounter(int c) {return wait_until_not(stepCounter_, c);}
+    static int waitOnStepCounter(int c) {
+        stepCounterBarrier_.markArrival();
+        return wait_until_not(stepCounter_, c);
+    }
 
     /* Task reduction functions */
 
@@ -442,8 +460,8 @@ private:
     // Helper functions for operations that need the current task
     int getCurrentTaskId() {
         int threadId = Thread::getId();
-        int subTaskId = threads_[threadId].getCurrentSubTaskId();
-        if (subTaskId == -1) {
+        int subTaskId = nextSubTask_[threadId]-1;
+        if (subTaskId < 0 || subTaskId >= getNumSubTasks(threadId)) {
             return -1;
         }
         return threadSubTasks_[threadId][subTaskId]->getTaskId();
@@ -506,6 +524,7 @@ private:
             task.functorBeginBarrier_.close();
             task.functorEndBarrier_.close(task.getNumThreads());
         }
+        nextSubTask_.assign(getNumThreads(), 0);
 
         // Increment counter only
         stepCounter_.fetch_add(1, std::memory_order_release);
@@ -522,17 +541,24 @@ private:
         for(unsigned int i=1;i<tasks_.size();i++) {
             tasks_[i].functorEndBarrier_.wait();
         }
+
+        // Wait for all threads to complete step before changing any internal state
+        stepCounterBarrier_.wait();
+        stepCounterBarrier_.close(getNumThreads()-1);
+
         isActive_ = false;
         instance_ = defaultInstance_;
     }
     std::deque<Task>  tasks_;  //It is essential this isn't a vector (doesn't get moved when resizing). Is this ok to be a list (linear) or does it need to be a tree? A serial task isn't before a loop. It is both before and after.
     std::map<std::string,int> taskLabels_;
     std::vector< std::vector<SubTask *> > threadSubTasks_;
+    std::vector<int> nextSubTask_; // Index of next subtask for each thread
     bool bUseDefaultSchedule_;
     // "Active" means schedule is between nextStep and wait calls.
     bool isActive_;
     static std::deque<Thread> threads_;
     static std::atomic<int> stepCounter_;
+    static OMBarrier stepCounterBarrier_;
     static STS *defaultInstance_;
     static std::map<std::string, STS *> stsInstances_;
     static STS *instance_;

@@ -7,6 +7,7 @@
 #include <memory>
 
 #include <atomic>
+#include <string>
 #include <thread>
 
 #include "range.h"
@@ -34,13 +35,13 @@ public:
      *
      * \param[in] id   Id given to this thread. 0 is the OS thread.
      */
-    Thread(int id) :nextSubtaskId_(0) {
+    Thread(int id) :currentScheduleName_("") {
         if (id!=0) {
             thread_.reset(new std::thread([=](){id_=id; doWork();}));
         }
     }
     //! Disable move constructor
-    Thread(Thread&&) = delete; //nextSubtaskId_ access would not be thread-safe
+    Thread(Thread&&) = delete;
     //! Disable move assignment
     Thread& operator=(Thread&&) = delete;
     /*! \brief
@@ -50,8 +51,12 @@ public:
      * threads from Thread::doWork
      */
     void processQueue();
-    //! Execute the next subtask in the queue
-    void processTask();
+    /*! \brief
+     * Execute the next subtask in the queue
+     *
+     * \returns whether work remains for current step
+     */
+    bool processTask();
     //! Wait for thread to finish
     void join() { if (thread_) thread_->join(); }
     /*! \brief
@@ -63,16 +68,12 @@ public:
      * \returns thread Id
      */
     static int getId() { return id_; }
-    //! \brief Return current subtask Id
-    int getCurrentSubTaskId() {
-        return nextSubtaskId_ - 1;
-    }
 private:
     void doWork(); //function executed by worker threads
 
-    unsigned int nextSubtaskId_;
     std::unique_ptr<std::thread> thread_;
     static thread_local int id_;
+    std::string currentScheduleName_;
 };
 
 #endif // STS_THREAD_H

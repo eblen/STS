@@ -21,16 +21,16 @@ void Thread::processQueue() {
 bool Thread::processTask() {
     STS* sts = STS::getCurrentInstance();
     assert(currentScheduleName_ == sts->id);
-    SubTask* subtask = sts->AdvanceToNextSubTask(id_);
+    SubTask* subtask = sts->advanceToNextSubTask(id_);
     if (subtask == nullptr) {
         return false;
     }
     auto startWaitTime = sts_clock::now();
-    ITaskFunctor *task = sts->getTaskFunctor(subtask->getTaskId());
+    ITaskFunctor *functor = subtask->getFunctor();
     auto startTaskTime = sts_clock::now();
     subtask->waitTime_ = startTaskTime - startWaitTime;
-    task->run(subtask->getRange());
+    functor->run(subtask->range_);
     subtask->runTime_ = sts_clock::now() - startTaskTime;
-    sts->markSubtaskComplete(subtask->getTaskId());
+    subtask->markComplete();
     return true;
 }

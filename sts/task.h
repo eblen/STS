@@ -62,33 +62,8 @@ private:
     F func_;
 };
 
-/*! \internal \brief
- * The part of a task done by one thread
- *
- * Contains the input to a thread what to do (taskId_, range_) and the output
- * from the thread upon completion of the sub-task (done_, timing).
- * For a loop task the range_ is the subsection done by a thread. A basic
- * task is always completely executed by a single thread.
- */
-class SubTask {
-public:
-    /*! \brief
-     * Constructor
-     *
-     * \param[in] taskId   The ID of the task this is part of.
-     * \param[in] range    Out of a possible range from 0 to 1, the section in
-                           this part. Ignored for basic tasks.
-     */
-    SubTask(int taskId, Range<Ratio> range) : taskId_(taskId), range_(range) {}
-    int getTaskId() const { return taskId_; }               //!< get Task Id
-    const Range<Ratio>& getRange() const { return range_; } //!< get Range
-
-    sts_clock::duration waitTime_; /**< Time spent until task was ready */
-    sts_clock::duration runTime_;  /**< Time spent executing sub-task  */
-private:
-    int taskId_;                   /**< The ID of the task this is a part of */
-    Range<Ratio> range_;           /**< Range (out of [0,1]) of loop part */
-};
+// Forward declaration
+class SubTask;
 
 /*! \internal \brief
  * A task to be executed
@@ -149,6 +124,51 @@ private:
     int numThreads_;
     //! Map STS thread id to an id only for this task (task ids are consecutive starting from 0)
     std::map<int, int> threadTaskIds_;
+};
+
+/*! \internal \brief
+ * The portion of a task done by one thread
+ *
+ * Contains all data and functions needed to execute the subtask, along with
+ * timing variables that can be used to record wait and run times.
+ */
+class SubTask {
+public:
+    /*! \brief
+     * Constructor
+     *
+     * \param[in] task     The task this is part of.
+     * \param[in] range    Out of a possible range from 0 to 1, the section in
+                           this part. Ignored for basic tasks.
+     */
+    SubTask(Task &task, Range<Ratio> range) : task_(task), range_(range) {}
+    /*! \brief
+     * Get the functor for the subtask.
+     * Threads should execute the functor on the range. Note that this function
+     * may wait for the corresponding run/parallel_for section to be encountered
+     * and then assigned by the main thread.
+     */
+    ITaskFunctor *getFunctor() {
+        task_.functorBeginBarrier_.wait();
+        return task_.functor_;
+    }
+    const Task &getTask() {
+        return task_;
+    }
+    /*! \brief
+     * Mark work as completed.
+     * Threads must always call this after completing the functor so that main
+     * thread can proceed.
+     */
+    void markComplete() {
+        task_.functorEndBarrier_.markArrival();
+    }
+
+    sts_clock::duration waitTime_; /**< Time spent until task was ready */
+    sts_clock::duration runTime_;  /**< Time spent executing subtask  */
+    const Range<Ratio> range_;     /**< Range (out of [0,1]) of loop part */
+private:
+    Task &task_;             /**< Reference to main task */
 };
 
 #endif // STS_TASK_H

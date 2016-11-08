@@ -143,7 +143,7 @@ public:
     void assign(std::string label, int threadId, Range<Ratio> range = Range<Ratio>(1)) {
         int id = getTaskId(label);
         assert(range.start>=0 && range.end<=1);
-        SubTask *t = new SubTask(id, range);
+        SubTask *t = new SubTask(tasks_[id], range);
         threadSubTasks_[threadId].push_back(t);
         tasks_[id].pushSubtask(threadId, t);
     }
@@ -251,7 +251,7 @@ public:
         if (nst < getNumSubTasks(tid)) {
             subtask = threadSubTasks_[tid][nst];
         }
-        bool isMyNextTask = (subtask != nullptr) && (subtask->getTaskId() == taskId);
+        bool isMyNextTask = (subtask != nullptr) && (&subtask->getTask() == &task);
         // Calling thread should either be assigned to this loop as its next task, or it should be a dummy loop.
         // Allowing the latter gives the main thread the ability to skip a single task and all of its nested loops.
         assert((start == end) || isMyNextTask);
@@ -337,25 +337,12 @@ public:
         return instance_;
     }
     /*! \brief
-     * Returns the task functor for a given task Id
-     *
-     * Waits on functor to be ready if the corresponding run()/parallel_for() hasn't been executed yet.
-     *
-     * \param[in] taskId  task Id
-     * \returns task functor
-     */
-    ITaskFunctor *getTaskFunctor(int taskId) {
-        tasks_[taskId].functorBeginBarrier_.wait();
-        return tasks_[taskId].functor_;
-    }
-    /*! \brief
      * Advances to and returns the next subtask for the given thread
      *
      * \param[in] threadId   Thread Id
-     * \param[in] subTaskId  subtask Id
      * \returns pointer to thread's next subtask
      */
-    SubTask *AdvanceToNextSubTask(int threadId) {
+    SubTask *advanceToNextSubTask(int threadId) {
         int st = nextSubTask_[threadId]++;
         if (st >= getNumSubTasks(threadId)) {
             return nullptr;
@@ -371,14 +358,6 @@ public:
      */
     int getNumSubTasks(int threadId) const {
         return threadSubTasks_[threadId].size();
-    }
-    /*! \brief
-     * Mark that this thread has completed its assigned subtask for task taskId
-     *
-     * \param[in] taskId  Task Id
-     */
-    void markSubtaskComplete(int taskId) {
-        tasks_[taskId].functorEndBarrier_.markArrival();
     }
     /*! \brief
      * Get number of threads for current task or 0 if no current task
@@ -457,21 +436,13 @@ public:
         collect(a, getTaskThreadId());
     }
 private:
-    // Helper functions for operations that need the current task
-    int getCurrentTaskId() {
+    const Task *getCurrentTask() {
         int threadId = Thread::getId();
         int subTaskId = nextSubTask_[threadId]-1;
         if (subTaskId < 0 || subTaskId >= getNumSubTasks(threadId)) {
-            return -1;
-        }
-        return threadSubTasks_[threadId][subTaskId]->getTaskId();
-    }
-    const Task *getCurrentTask() {
-        int taskId = getCurrentTaskId();
-        if (taskId == -1) {
             return nullptr;
         }
-        return &tasks_[taskId];
+        return &threadSubTasks_[threadId][subTaskId]->getTask();
     }
     bool isTaskAssigned(std::string label) const {
         return (taskLabels_.find(label) != taskLabels_.end());

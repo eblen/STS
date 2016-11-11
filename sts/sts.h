@@ -7,6 +7,7 @@
 #include <iostream>
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -140,12 +141,19 @@ public:
      * \param[in] threadId The Id of the thread to assign to
      * \param[in] range    The range for a loop task to assing. Ignored for basic task.
      */
-    void assign(std::string label, int threadId, Range<Ratio> range = Range<Ratio>(1)) {
-        int id = getTaskId(label);
+    void assign(std::string label, int threadId, Task::Type ttype,
+            Range<Ratio> range, const std::set<int> &uaTaskThreads) {
+        int id = setTask(label, ttype, uaTaskThreads);
         assert(range.start>=0 && range.end<=1);
         SubTask *t = new SubTask(tasks_[id], range);
         threadSubTasks_[threadId].push_back(t);
         tasks_[id].pushSubtask(threadId, t);
+    }
+    void assign_run(std::string label, int threadId, const std::set<int> &uaTaskThreads = {}) {
+        assign(label, threadId, Task::RUN, Range<Ratio>(1), uaTaskThreads);
+    }
+    void assign_loop(std::string label, int threadId, Range<Ratio> range) {
+        assign(label, threadId, Task::LOOP, range, {});
     }
     //! \brief Clear all assignments
     void clearAssignments() {
@@ -167,7 +175,7 @@ public:
         clearAssignments();
         int numThreads = getNumThreads();
         for (int id = 0; id < numThreads; id++) {
-            assign("default", id, {{id, numThreads}, {id + 1, numThreads}});
+            assign_loop("default", id, {{id, numThreads}, {id + 1, numThreads}});
         }
     }
     /*! \brief
@@ -447,17 +455,40 @@ private:
     bool isTaskAssigned(std::string label) const {
         return (taskLabels_.find(label) != taskLabels_.end());
     }
-    // Creates new ID for unknown label.
-    // Creating IDs isn't thread safe. OK because assignments and run/parallel_for (if run without pre-assignment) are executed by master thread while other threads wait on nextStep.
+    /* \brief
+     * Get task id for task label
+     *
+     * Undefined behavior if task doesn't exist.
+     *
+     * \param[in] task label
+     * \return task id
+     */
     int getTaskId(std::string label) {
         auto it = taskLabels_.find(label);
+        assert(it != taskLabels_.end());
+        return it->second;
+    }
+    /* \brief
+     * Sets values for a task, creating a new task object if it doesn't exist.
+     *
+     * Creating tasks isn't thread safe, so this should only be called when
+     * doing thread assignments between schedule runs.
+     * \param[in] label for task
+     * \return task id
+     */
+    int setTask(std::string label, Task::Type ttype, const std::set<int> &uaTaskThreads) {
+        // TODO: Add asserts for schedule state (using isActive_ variable perhaps)
+        assert(Thread::getId() == 0);
+        auto it = taskLabels_.find(label);
         if (it != taskLabels_.end()) {
+            // Do not allow changing of task type
+            assert(ttype == tasks_[it->second].getType());
             return it->second;
-        } else {
-            assert(Thread::getId()==0); //creating thread should only be done by master thread
+        }
+        else {
             unsigned int v = taskLabels_.size();
             assert(v==tasks_.size());
-            tasks_.resize(v+1);
+            tasks_.emplace_back(ttype, uaTaskThreads);
             taskLabels_[label] = v;
             return v;
         }

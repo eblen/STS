@@ -50,17 +50,17 @@ void g(int step, std::string stsId) {
 void assign_threads(STS *sts) {
     sts->clearAssignments();
 
-    sts->assign("TASK_F", 1);
-    sts->assign("TASK_G", 2);
+    sts->assign_run("TASK_F", 1);
+    sts->assign_run("TASK_G", 2);
 
-    sts->assign("TASK_F_0", 1, {0, {2,3}});
+    sts->assign_loop("TASK_F_0", 1, {0, {2,3}});
 
-    sts->assign("TASK_G_0", 2, {0, {1,2}});
-    sts->assign("TASK_G_1", 2, {0, {1,2}});
+    sts->assign_loop("TASK_G_0", 2, {0, {1,2}});
+    sts->assign_loop("TASK_G_1", 2, {0, {1,2}});
 
-    sts->assign("TASK_G_0", 0, {{1,2}, 1});
-    sts->assign("TASK_F_0", 0, {{2,3}, 1});
-    sts->assign("TASK_G_1", 0, {{1,2}, 1});
+    sts->assign_loop("TASK_G_0", 0, {{1,2}, 1});
+    sts->assign_loop("TASK_F_0", 0, {{2,3}, 1});
+    sts->assign_loop("TASK_G_1", 0, {{1,2}, 1});
 }
 
 int main(int argc, char **argv)

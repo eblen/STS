@@ -2,6 +2,7 @@
 #define STS_TASK_H
 
 #include <map>
+#include <set>
 #include <vector>
 
 #include <chrono>
@@ -74,6 +75,7 @@ class SubTask;
  * the schedule, in serial or in parallel.
  */
 struct Task {
+    enum Type {RUN,LOOP};
     void *reduction_; //!< Reduction function to execute after task completes
     ITaskFunctor *functor_;      //!< The function/loop to execute
     MOBarrier functorBeginBarrier_; //!< Many-to-one barrier to sync threads at beginning of loop
@@ -84,7 +86,9 @@ struct Task {
     sts_clock::duration waitTime_; //!< Time that main thread waits on end barrier
     sts_clock::duration reductionTime_; //!< Time spent doing reduction
 
-    Task() :reduction_(nullptr), functor_(nullptr), waitTime_(0), reductionTime_(0), numThreads_(0) {}
+    Task(Type t, const std::set<int> &uaTaskThreads = {}) :reduction_(nullptr),
+    functor_(nullptr), waitTime_(0), reductionTime_(0), type_(t),
+    numThreads_(0), uaTaskThreads_(uaTaskThreads) {}
     /*! \brief
      * Add a new subtask for this task
      *
@@ -120,9 +124,20 @@ struct Task {
         }
         return (*id).first;
     }
+    Type getType() {
+        return type_;
+    }
+    const std::set<int> &getUATaskThreads() {
+        return uaTaskThreads_;
+    }
 private:
+    Type type_;
     int numThreads_;
+    //! Threads used for executing unassigned tasks
+    //! Note: Only relevant for RUN tasks (LOOP tasks cannot contain other tasks)
+    std::set<int> uaTaskThreads_;
     //! Map STS thread id to an id only for this task (task ids are consecutive starting from 0)
+    //! Note: Only useful for LOOP tasks (RUN tasks only have one thread)
     std::map<int, int> threadTaskIds_;
 };
 

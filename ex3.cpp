@@ -28,8 +28,8 @@ int main(int argc, char **argv)
   STS::startup(nthreads);
   sts = new STS();
   sts->clearAssignments();
-  sts->assign("TASK_F", 0);
-  for (int t=0; t<nthreads; t++) sts->assign("TASK_F_0", t, {{t,nthreads},{t+1,nthreads}});
+  sts->assign_run("TASK_F", 0);
+  for (int t=0; t<nthreads; t++) sts->assign_loop("TASK_F_0", t, {{t,nthreads},{t+1,nthreads}});
   for (int step=0; step<nsteps; step++) {
       sts->nextStep();
       sts->run("TASK_F", task_f);

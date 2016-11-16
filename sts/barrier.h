@@ -19,9 +19,14 @@
  * \param[in] a   atomic variable
  * \param[in] v   value
  */
-template <typename A, typename T>
-void wait_until(const A &a, T v) {
+template <typename T>
+void wait_until(const std::atomic<T> &a, T v) {
     while (a.load() != v);
+}
+//! Template overload to support nullptr
+template <typename T>
+void wait_until(const std::atomic<T> &a, std::nullptr_t) {
+    while (a.load() != nullptr);
 }
 /*! \brief
  * Wait until atomic variable a is not set to value v
@@ -30,12 +35,21 @@ void wait_until(const A &a, T v) {
  * \param[in] v   value
  * \returns       new value of a
  */
-template <typename A, typename T>
-T wait_until_not(const A &a, T v) {
+template <typename T>
+T wait_until_not(const std::atomic<T> &a, T v) {
     T v2;
     do {
         v2 = a.load();
     } while(v2 == v);
+    return v2;
+}
+//! Template overload to support nullptr
+template <typename T>
+T wait_until_not(const std::atomic<T> &a, std::nullptr_t) {
+    T v2;
+    do {
+        v2 = a.load();
+    } while(v2 == nullptr);
     return v2;
 }
 

@@ -92,7 +92,7 @@ public:
         assert(instance_ == defaultInstance_);
         //-1 notifies threads to finish
         stepCounter_.store(-1, std::memory_order_release);
-        for (unsigned int i=1;i<getNumThreads();i++) {
+        for (int i=1;i<getNumThreads();i++) {
             threads_[i].join();
         }
         delete defaultInstance_;
@@ -105,6 +105,11 @@ public:
     STS(std::string name = "") :id(name), bUseDefaultSchedule_(false), isActive_(false) {
         int n = getNumThreads();
         assert(n > 0);
+        for (int i=0; i<n; i++) {
+            uaTasks_.emplace_back(Task::LOOP);
+            threadUASubTasks_.emplace_back(n);
+        }
+        parentTasks_.resize(n,nullptr);
         threadSubTasks_.resize(n);
         if (!id.empty()) {
             stsInstances_[id] = this;
@@ -221,6 +226,7 @@ public:
      */
     template<typename F, typename T=int>
     void parallel_for(std::string label, int64_t start, int64_t end, F body, TaskReduction<T> *red = nullptr) {
+        // Error checking
         if (!bUseDefaultSchedule_) {
             assert(this == instance_);
             // Cannot invoke an instance that is inactive
@@ -232,50 +238,69 @@ public:
             // in the middle of an active schedule.
             assert(instance_->isActive_ == false);
         }
-        int taskId = -1;
+
+        // Find relevant task structure
+        Task* task = nullptr;
+        bool isUATask = false;
         if (bUseDefaultSchedule_) {
             assert(isTaskAssigned("default"));
-            taskId = getTaskId("default");
+            int taskId = getTaskId("default");
             assert(taskId == 0); // Default schedule should have only the "default" task with id 0.
-            nextStepInternal();  // Default schedule has only a single step and the user doesn't need to call nextStep
+            task = &tasks_[taskId];
+            // Call next step here so that user does not need to call next step for default scheduling.
+            nextStepInternal();
         } else if (!isTaskAssigned(label)) {
-            for (int i=start; i<end; i++) {
-                body(i);
+            isUATask = true;
+            int tid = Thread::getId();
+            if (parentTasks_[tid] != nullptr) {
+                task = initUATask(tid, parentTasks_[tid]->getUATaskThreads());
             }
-            if (red != nullptr) {
-                red->reduce();
+            else {
+                task = initUATask(tid, {});
             }
-            return;
         } else {
-            taskId = getTaskId(label);
+            task = &tasks_[getTaskId(label)];
         }
-        auto &task = tasks_[taskId];
-        task.reduction_ = red;
-        task.functor_ = new LoopTaskFunctor<F>(body, {start, end});
-        task.functorBeginBarrier_.open();
+
+        // Prepare task structure (launches other threads assigned to this loop)
+        task->reduction_ = red;
+        task->functor_ = new LoopTaskFunctor<F>(body, {start, end});
+        task->functorBeginBarrier_.open();
+
+        // Error checking (mostly). In general, the calling thread must have
+        // this loop as its next task, with an exception for unassigned tasks
+        // or dummy loops.
+        // Allowing dummy loops gives the main thread the ability to skip a
+        // single task along with all of its nested loops.
+        // Note that this will change the code logic by skipping dummy loops
+        // that are assigned but not the next task for this thread. So this
+        // is not strictly only error checking code.
+        const SubTask* myNextSubTask = nullptr;
         int tid = Thread::getId();
-        int nst = nextSubTask_[tid];
-        SubTask *subtask = nullptr;
-        if (nst < getNumSubTasks(tid)) {
-            subtask = threadSubTasks_[tid][nst];
+        int st = nextSubTask_[tid];
+        if (st < getNumSubTasks(tid)) {
+            myNextSubTask = threadSubTasks_[tid][st];
         }
-        bool isMyNextTask = (subtask != nullptr) && (&subtask->getTask() == &task);
-        // Calling thread should either be assigned to this loop as its next task, or it should be a dummy loop.
-        // Allowing the latter gives the main thread the ability to skip a single task and all of its nested loops.
-        assert((start == end) || isMyNextTask);
-        if (isMyNextTask) {
-            assert(threads_[tid].processTask()); // false return value contradicts previous assertion
+        bool isMyNextTask = ((myNextSubTask != nullptr) && (&myNextSubTask->getTask() == task));
+        assert(isMyNextTask || isUATask || (start == end));
+
+        // Run subtask, wait on other threads, and do reduction
+        if (isMyNextTask || isUATask) {
+            // Process task. False return contradicts either initUATask call or
+            // requirement that loop be the next task in the assigned queue.
+            assert(threads_[tid].processTask(isUATask ? SubTask::UNASSIGNED : SubTask::ASSIGNED));
             auto startWaitTime = sts_clock::now();
-            task.functorEndBarrier_.wait();
-            task.waitTime_ = sts_clock::now() - startWaitTime;
+            task->functorEndBarrier_.wait();
+            task->waitTime_ = sts_clock::now() - startWaitTime;
             // TODO: A smarter reduction would take place before the above wait.
-            if (task.reduction_ != nullptr) {
+            if (task->reduction_ != nullptr) {
                 auto startReductionTime = sts_clock::now();
-                static_cast< TaskReduction<T> *>(task.reduction_)->reduce();
-                task.reductionTime_ = sts_clock::now() - startReductionTime;
+                static_cast< TaskReduction<T> *>(task->reduction_)->reduce();
+                task->reductionTime_ = sts_clock::now() - startReductionTime;
             }
         }
-        // User does not need to call wait for default scheduling
+        // Call wait here so that user does not need to call wait for default scheduling.
+        // It works because default scheduling only has one task - the present loop.
         if (bUseDefaultSchedule_) {
             waitInternal();
         }
@@ -345,18 +370,48 @@ public:
         return instance_;
     }
     /*! \brief
-     * Advances to and returns the next subtask for the given thread
+     * Advances to and returns a next subtask for the given thread and queue(s)
      *
      * \param[in] threadId   Thread Id
-     * \returns pointer to thread's next subtask
+     * \param[in] queue      Subtask queue(s) to wait on
+     * \returns pointer to thread's next subtask in one of the requested queues
+     *          nullptr indicates requested queue(s) is/are "permanently" exhausted
+     *          (no more work for the current step)
      */
-    SubTask *advanceToNextSubTask(int threadId) {
-        int st = nextSubTask_[threadId]++;
-        if (st >= getNumSubTasks(threadId)) {
-            return nullptr;
+    SubTask *advanceToNextSubTask(int threadId, SubTask::Type queue = SubTask::EITHER) {
+        StaticDeque<SubTask> &uaSubTaskQueue = threadUASubTasks_[threadId];
+
+        // For a specific type, simply wait for that type
+        if (queue == SubTask::UNASSIGNED) {
+            return uaSubTaskQueue.wait();
         }
-        else {
-            return threadSubTasks_[threadId][st];
+        if (queue == SubTask::ASSIGNED) {
+            return advanceToNextAssignedSubTask(threadId);
+        }
+
+        // Oscillate between unassigned and assigned queues
+        // Only return nullptr if both queues are exhausted. For efficiency,
+        // once one queue is exhausted, stop oscillating and only wait on the
+        // remaining queue.
+        while(1) {
+            if (uaSubTaskQueue.test()) {
+                SubTask* st = uaSubTaskQueue.wait();
+                if (st != nullptr) {
+                    return st;
+                }
+                else {
+                    return advanceToNextAssignedSubTask(threadId);
+                }
+            }
+            if (isAssignedTaskQueueReady(threadId)) {
+                SubTask* st = advanceToNextAssignedSubTask(threadId);
+                if (st != nullptr) {
+                    return st;
+                }
+                else {
+                    return uaSubTaskQueue.wait();
+                }
+            }
         }
     }
     /*! \brief
@@ -444,6 +499,60 @@ public:
         collect(a, getTaskThreadId());
     }
 private:
+    /* \brief
+     * See if assigned task queue is ready (advanceToNextAssignedSubTask will
+     * return immediately).
+     *
+     * \param[in] threadId
+     * \return whether the assigned task queue is ready. Also returns true if
+     *         queue is exhausted, because primary purpose is to see if queue
+     *         can be accessed without waiting.
+     */   
+    bool isAssignedTaskQueueReady(int threadId) const {
+        int st = nextSubTask_[threadId];
+        if (st < getNumSubTasks(threadId)) {
+            return threadSubTasks_[threadId][st]->isReady();
+        }
+        else {
+            return true;
+        }
+    }    
+    /* \brief
+     * Get next assigned subtask for the given thread
+     *
+     * This function handles low-level operations for advancing assigned subtasks
+     *
+     * \param[in] thread id
+     * \return pointer to next subtask or nullptr if queue exhausted.
+     */
+    SubTask* advanceToNextAssignedSubTask(int threadId) {
+        static std::atomic<int> numFinishingThreads{0};
+        SubTask* asubtask = nullptr;
+        int st = nextSubTask_[threadId]++;
+        if (st < getNumSubTasks(threadId)) {
+            asubtask = threadSubTasks_[threadId][st];
+        }
+        if (asubtask != nullptr && asubtask->getTask().getType() == Task::RUN) {
+            parentTasks_[threadId] = &asubtask->getTask();
+        }
+        // Keep track of how many threads have finished all assigned tasks.
+        // Last thread to finish all of its assigned tasks halts all threads
+        // by placing a nullptr in each thread's unassigned queue.
+
+        // Note that every call increments the subtask id, and we only respond
+        // when the id is exactly equal to the number of subtasks. Thus, this
+        // function can safely be called multiple times even after the queue is
+        // exhausted, and it works correctly for threads with no assigned tasks.
+        if (st == getNumSubTasks(threadId)) {
+            if (numFinishingThreads.fetch_add(1) == getNumThreads()-1) {
+                numFinishingThreads = 0;
+                for (int t=0; t<getNumThreads(); t++) {
+                    threadUASubTasks_[t].put(nullptr);
+                }
+            }
+        }
+        return asubtask;
+    }
     const Task *getCurrentTask() {
         int threadId = Thread::getId();
         int subTaskId = nextSubTask_[threadId]-1;
@@ -527,6 +636,7 @@ private:
             task.functorEndBarrier_.close(task.getNumThreads());
         }
         nextSubTask_.assign(getNumThreads(), 0);
+        parentTasks_.assign(getNumThreads(), nullptr);
 
         // Increment counter only
         stepCounter_.fetch_add(1, std::memory_order_release);
@@ -551,9 +661,31 @@ private:
         isActive_ = false;
         instance_ = defaultInstance_;
     }
+    //! Initialize slot for an unassigned task
+    Task* initUATask(int mainThreadId, std::set<int> workerThreadIds) {
+        Task* task = &uaTasks_[mainThreadId];
+        task->clearSubtasks();
+        workerThreadIds.insert(mainThreadId);
+        int numThreads = workerThreadIds.size();
+        // Must close barrier before assigning tasks
+        task->functorBeginBarrier_.close();
+        task->functorEndBarrier_.close(numThreads);
+        int numer = 0;
+        for (int tid : workerThreadIds) {
+            SubTask *st = new SubTask(*task, {{numer, numThreads}, {numer+1, numThreads}});
+            numer++;
+            task->pushSubtask(tid, st);
+            threadUASubTasks_[tid].put(st);
+        }
+
+        return task;
+    }
     std::deque<Task>  tasks_;  //It is essential this isn't a vector (doesn't get moved when resizing). Is this ok to be a list (linear) or does it need to be a tree? A serial task isn't before a loop. It is both before and after.
+    std::deque<Task> uaTasks_; // Slots for unassigned tasks (one slot per thread, so size is fixed to number of threads).
+    std::vector<const Task *> parentTasks_; // The current parent task for each thread, used to link loops with "run" sections
     std::map<std::string,int> taskLabels_;
     std::vector< std::vector<SubTask *> > threadSubTasks_;
+    std::deque< StaticDeque<SubTask> >  threadUASubTasks_;
     std::vector<int> nextSubTask_; // Index of next subtask for each thread
     bool bUseDefaultSchedule_;
     // "Active" means schedule is between nextStep and wait calls.

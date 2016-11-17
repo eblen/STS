@@ -3,8 +3,10 @@
 
 #include <cassert>
 
+#include <deque>
 #include <map>
 #include <string>
+#include <vector>
 
 #include <atomic>
 
@@ -66,6 +68,14 @@ public:
      */
     void wait() {
         wait_until(isLocked, false);
+    }
+    /*! \brief
+     * Test if barrier is "open" without waiting
+     *
+     * \return whether barrier is open
+     */
+    bool test() {
+        return !isLocked;
     }
     /*! \brief
      * Open barrier. Should be called by "O" thread.
@@ -169,6 +179,47 @@ private:
     std::atomic<int>  numWaitingThreads;
     std::atomic<int>  numReleasedThreads;
     static std::map<std::string, MMBarrier *> barrierInstances_;
+};
+
+/*! \internal \brief
+ * A simple fixed-size deque
+ *
+ * This deque avoids dynamic memory allocation and only uses atomics for
+ * synchronizing access. It has the following restrictions:
+ * 1) Behavior is undefined if capacity passed to constructor is exceeded.
+ * 2) It only supports storing of pointers.
+ * 3) It assumes a single consumer but allows multiple producers.
+ * 4) Integer overflow of indices is possible.
+ *    TODO: Fix or verify that this is not a practical problem.
+ */
+template <class T>
+class StaticDeque {
+public:
+    StaticDeque(int s) :size(s), front(0), back(0), items(s,nullptr) {
+        for (int i=0; i<s; i++) {
+            itemReady.emplace_back(false);
+        }
+    }
+    T* wait() {
+        while(!itemReady[front % size]);
+        itemReady[front % size] = false;
+        return items[front++ % size];
+    }
+    bool test() const {
+        return itemReady[front % size];
+    }
+    void put(T* p) {
+        int slot = back.fetch_add(1);
+        items[slot % size] = p;
+        assert(itemReady[slot % size] == false);
+        itemReady[slot % size] = true;
+    }
+private:
+    const size_t size;
+    size_t front;
+    std::atomic<size_t> back;
+    std::deque< std::atomic<bool> > itemReady;
+    std::vector<T*> items;
 };
 
 #endif // STS_BARRIER_H

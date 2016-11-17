@@ -124,10 +124,10 @@ struct Task {
         }
         return (*id).first;
     }
-    Type getType() {
+    Type getType() const {
         return type_;
     }
-    const std::set<int> &getUATaskThreads() {
+    const std::set<int> &getUATaskThreads() const {
         return uaTaskThreads_;
     }
 private:
@@ -149,6 +149,7 @@ private:
  */
 class SubTask {
 public:
+    enum Type {ASSIGNED, UNASSIGNED, EITHER};
     /*! \brief
      * Constructor
      *
@@ -156,7 +157,15 @@ public:
      * \param[in] range    Out of a possible range from 0 to 1, the section in
                            this part. Ignored for basic tasks.
      */
-    SubTask(Task &task, Range<Ratio> range) : task_(task), range_(range) {}
+    SubTask(Task &task, Range<Ratio> range) : range_(range), task_(task) {}
+    /*! \brief
+     * Test if functor is available to execute without waiting
+     *
+     * \return whether functor is ready
+     */
+    bool isReady() const {
+        return task_.functorBeginBarrier_.test();
+    }
     /*! \brief
      * Get the functor for the subtask.
      * Threads should execute the functor on the range. Note that this function
@@ -167,7 +176,7 @@ public:
         task_.functorBeginBarrier_.wait();
         return task_.functor_;
     }
-    const Task &getTask() {
+    const Task &getTask() const {
         return task_;
     }
     /*! \brief

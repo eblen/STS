@@ -18,10 +18,10 @@ void Thread::processQueue() {
     assert(currentScheduleName_ == STS::getCurrentInstance()->id);
 }
 
-bool Thread::processTask() {
+bool Thread::processTask(SubTask::Type stType) {
     STS* sts = STS::getCurrentInstance();
     assert(currentScheduleName_ == sts->id);
-    SubTask* subtask = sts->advanceToNextSubTask(id_);
+    SubTask* subtask = sts->advanceToNextSubTask(id_, stType);
     if (subtask == nullptr) {
         return false;
     }

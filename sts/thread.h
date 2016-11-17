@@ -56,7 +56,7 @@ public:
      *
      * \returns whether work remains for current step
      */
-    bool processTask();
+    bool processTask(SubTask::Type stType = SubTask::EITHER);
     //! Wait for thread to finish
     void join() { if (thread_) thread_->join(); }
     /*! \brief

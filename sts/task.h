@@ -76,18 +76,20 @@ class SubTask;
  */
 struct Task {
     enum Type {RUN,LOOP};
+    enum Priority {NORMAL, HIGH};
+    Priority priority_;
     void *reduction_; //!< Reduction function to execute after task completes
     ITaskFunctor *functor_;      //!< The function/loop to execute
     MOBarrier functorBeginBarrier_; //!< Many-to-one barrier to sync threads at beginning of loop
     OMBarrier functorEndBarrier_; //!< One-to-many barrier to sync threads at end of loop
     //! All subtasks of this task. One for each section of a loop. One for a basic task.
-    std::vector<SubTask const*> subtasks_; //!< Subtasks to be executed by a single thread
+    std::vector<SubTask*> subtasks_; //!< Subtasks to be executed by a single thread
     //!< The waiting time in the implied barrier at the end of a loop. Zero for basic task.
     sts_clock::duration waitTime_; //!< Time that main thread waits on end barrier
     sts_clock::duration reductionTime_; //!< Time spent doing reduction
 
-    Task(Type t, const std::set<int> &uaTaskThreads = {}) :reduction_(nullptr),
-    functor_(nullptr), waitTime_(0), reductionTime_(0), type_(t),
+    Task(Type t, const std::set<int> &uaTaskThreads = {}) :priority_(NORMAL),
+    reduction_(nullptr), functor_(nullptr), waitTime_(0), reductionTime_(0), type_(t),
     numThreads_(0), uaTaskThreads_(uaTaskThreads) {}
     /*! \brief
      * Add a new subtask for this task
@@ -95,7 +97,7 @@ struct Task {
      * \param[in] threadId  thread to which this subtask is assigned
      * \param[in] t         subtask
      */
-    void pushSubtask(int threadId, SubTask const* t) {
+    void pushSubtask(int threadId, SubTask* t) {
         subtasks_.push_back(t);
         if (threadTaskIds_.find(threadId) == threadTaskIds_.end()) {
             threadTaskIds_[threadId] = numThreads_;
@@ -157,7 +159,8 @@ public:
      * \param[in] range    Out of a possible range from 0 to 1, the section in
                            this part. Ignored for basic tasks.
      */
-    SubTask(Task &task, Range<Ratio> range) : range_(range), task_(task) {}
+    SubTask(Task &task, Range<Ratio> range) : finished(false), range_(range),
+    task_(task) {}
     /*! \brief
      * Test if functor is available to execute without waiting
      *
@@ -186,10 +189,12 @@ public:
      */
     void markComplete() {
         task_.functorEndBarrier_.markArrival();
+        finished = true;
     }
 
     sts_clock::duration waitTime_; /**< Time spent until task was ready */
     sts_clock::duration runTime_;  /**< Time spent executing subtask  */
+    bool finished;
     const Range<Ratio> range_;     /**< Range (out of [0,1]) of loop part */
 private:
     Task &task_;             /**< Reference to main task */

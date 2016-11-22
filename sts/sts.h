@@ -160,6 +160,22 @@ public:
     void assign_loop(std::string label, int threadId, Range<Ratio> range) {
         assign(label, threadId, Task::LOOP, range, {});
     }
+    void setNormalPriority(std::string label) {
+        tasks_[getTaskId(label)].priority_ = Task::NORMAL;
+    }
+    template<typename ... Types>
+    void setNormalPriority(std::string label, Types ... rest) {
+        tasks_[getTaskId(label)].priority_ = Task::NORMAL;
+        setNormalPriority(rest...);
+    }
+    void setHighPriority(std::string label) {
+        tasks_[getTaskId(label)].priority_ = Task::HIGH;
+    }
+    template<typename ... Types>
+    void setHighPriority(std::string label, Types ... rest) {
+        tasks_[getTaskId(label)].priority_ = Task::HIGH;
+        setHighPriority(rest...);
+    }
     //! \brief Clear all assignments
     void clearAssignments() {
         for (auto &taskList : threadSubTasks_) {
@@ -498,6 +514,31 @@ public:
     void collect(T a) {
         collect(a, getTaskThreadId());
     }
+    /*! \brief
+     * Yield a running task and run the next high priority task
+     */
+    void yield() {
+        int tid = Thread::getId();
+        int maxSubTasks = getNumSubTasks(tid);
+        SubTask* hpSubTask = nullptr;
+        for (int i=nextSubTask_[tid]; i < maxSubTasks; i++)
+        {
+            SubTask* st = threadSubTasks_[tid][i];
+            if (st->getTask().priority_ == Task::HIGH) {
+                if (!st->finished && st->isReady()) {
+                    hpSubTask = st;
+                }
+                break;
+            }
+        }
+        if (hpSubTask != nullptr) {
+            auto startTaskTime = sts_clock::now();
+            hpSubTask->getFunctor()->run(hpSubTask->range_);
+            hpSubTask->runTime_ = sts_clock::now() - startTaskTime;
+            hpSubTask->markComplete();
+        }
+    }
+
 private:
     /* \brief
      * See if assigned task queue is ready (advanceToNextAssignedSubTask will
@@ -529,6 +570,10 @@ private:
         static std::atomic<int> numFinishingThreads{0};
         SubTask* asubtask = nullptr;
         int st = nextSubTask_[threadId]++;
+        // Some subtasks, such as high-priority subtasks, may have been done earlier.
+        while (st < getNumSubTasks(threadId) && threadSubTasks_[threadId][st]->finished) {
+            st = nextSubTask_[threadId]++;
+        }
         if (st < getNumSubTasks(threadId)) {
             asubtask = threadSubTasks_[threadId][st];
         }
@@ -634,6 +679,9 @@ private:
             task.functor_ = nullptr;
             task.functorBeginBarrier_.close();
             task.functorEndBarrier_.close(task.getNumThreads());
+            for (SubTask* st : task.subtasks_) {
+                st->finished  = false;
+            }
         }
         nextSubTask_.assign(getNumThreads(), 0);
         parentTasks_.assign(getNumThreads(), nullptr);

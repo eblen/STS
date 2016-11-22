@@ -13,3 +13,6 @@ bool SubTask::isDone() const {
 void SubTask::setDone(bool isDone) {
     isDone_ = isDone;
 }
+bool SubTask::isReady() const {
+    return task_->isReady();
+}

@@ -193,6 +193,22 @@ public:
             assign_loop(label, threadIds[i], {{i, nthreads},{i+1, nthreads}});
         }
     }
+    void setNormalPriority(std::string label) {
+        tasks_[getTaskId(label)]->setPriority(Task::NORMAL);
+    }
+    template<typename ... Types>
+    void setNormalPriority(std::string label, Types ... rest) {
+        tasks_[getTaskId(label)]->setPriority(Task::NORMAL);
+        setNormalPriority(rest...);
+    }
+    void setHighPriority(std::string label) {
+        tasks_[getTaskId(label)]->setPriority(Task::HIGH);
+    }
+    template<typename ... Types>
+    void setHighPriority(std::string label, Types ... rest) {
+        tasks_[getTaskId(label)]->setPriority(Task::HIGH);
+        setHighPriority(rest...);
+    }
     //! \brief Clear all assignments
     void clearAssignments() {
         for (auto &taskList : threadSubTasks_) {
@@ -403,9 +419,14 @@ public:
      *
      * \param[in] threadId Thread Id
      */
-    void goBackToPreviousSubTask() {
+    void goBackToPreviousSubTask(int taskId = -1) {
         int threadId = Thread::getId();
         int &st = nextSubTask_[threadId];
+        if (taskId > -1) {
+            assert(taskId < getNumSubTasks(threadId));
+            st = taskId+1;
+            return;
+        }
         // Always go back at least once, regardless of finished status.
         // Multiloops, for example, may not be finished when this function is
         // called, but we still want to go back to the containing subtask.
@@ -505,6 +526,23 @@ public:
     void collect(T a) {
         collect(a, getTaskThreadId());
     }
+    /*! \brief
+     * Yield a running task and run the next high priority task
+     */
+    void yield() {
+        int previousSubTaskId = nextSubTask_[Thread::getId()] - 1;
+        // Could be -1, which would mean a yield call outside of a task
+        assert(previousSubTaskId >= 0);
+        SubTask* st;
+        while ((st = advanceToNextSubTask()) != nullptr) {
+            if (st->getTask()->getPriority() == Task::HIGH && st->isReady()) {
+                st->run();
+                break;
+            }
+        }
+        goBackToPreviousSubTask(previousSubTaskId);
+    }
+
 private:
     const Task *getCurrentTask() {
         int threadId = Thread::getId();

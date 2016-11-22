@@ -72,6 +72,10 @@ public:
      */
     void open() {isLocked.store(false);}
     /*! \brief
+     * Check if barrier is open
+     */
+    bool isOpen() const {return !isLocked.load();}
+    /*! \brief
      * Reset barrier
      */
     void close() {isLocked.store(true);}

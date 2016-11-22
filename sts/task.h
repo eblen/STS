@@ -90,6 +90,7 @@ public:
     const Task *getTask() const;
     bool isDone() const;
     void setDone(bool isDone);
+    bool isReady() const;
 
     const Range<Ratio> range_;     /**< Range (out of [0,1]) of loop part */
 private:
@@ -99,8 +100,8 @@ private:
 
 /*! \internal \brief
  * Base task class that handles the storage and bookkeeping of subtasks,
- * common operations needed by all subclasses. It also stored reduction
- * functions.
+ * common operations needed by all subclasses. It also stores reduction
+ * functions and task priority.
  *
  * Each subtask is assigned to a single thread, and this class assigns a
  * Task-specific thread id to all participating threads. Subclasses store
@@ -111,7 +112,8 @@ private:
  */
 class Task {
 public:
-    Task() :numThreads_(0), reduction_(nullptr) {}
+    enum Priority {NORMAL, HIGH};
+    Task() :numThreads_(0), reduction_(nullptr), priority_(NORMAL) {}
     /*! \brief
      * Add a new subtask for this task
      *
@@ -160,6 +162,14 @@ public:
         }
         init();
     }
+    //! \brief Get task priority
+    Priority getPriority() const {
+        return priority_;
+    }
+    //! \brief Set task priority
+    void setPriority(Priority p) {
+        priority_ = p;
+    }
     //! \brief Get reduction function
     void* getReduction() const {
         return reduction_;
@@ -176,14 +186,16 @@ public:
         reduction_ = r;
     }
     //! \brief Set the functor (work) to be done
-    virtual void  setFunctor(ITaskFunctor*) = 0;
+    virtual void setFunctor(ITaskFunctor*) = 0;
+    //! \brief Return whether task is ready to run
+    virtual bool isReady() const = 0;
     //! \brief Run the functor in the specified range
-    virtual bool  run(Range<Ratio>) = 0;
+    virtual bool run(Range<Ratio>) = 0;
     //! \brief Wait for the functor to complete
-    virtual void  wait() = 0;
+    virtual void wait() = 0;
     virtual ~Task() {}
 protected:
-    void* reduction_;
+    void*    reduction_;
 private:
     /*! \brief
      * Initialize the task. This function is called by "restart" and should do
@@ -196,6 +208,7 @@ private:
     int numThreads_;
     //! Map STS thread id to an id only for this task (task ids are consecutive starting from 0)
     std::map<int, int> threadTaskIds_;
+    Priority priority_;
 };
 
 /*! \brief
@@ -221,6 +234,12 @@ public:
     void setFunctor(ITaskFunctor* f) {
         functor_.reset(f);
         functorBeginBarrier_.open();
+    }
+    /*! \brief
+     * Return whether task is ready to run
+     */
+    bool isReady() const {
+        return functorBeginBarrier_.isOpen();
     }
     /*! \brief
      * Run the functor for the specified range
@@ -287,6 +306,13 @@ public:
         functorEndBarrier_.close(this->getNumThreads());
         functor_.reset(f);
         functorCounter_++;
+    }
+    /*! \brief
+     * Return whether task is ready to run
+     */
+    bool isReady() const {
+        int localThreadId = this->getThreadId(Thread::getId());
+        return functorCounter_.load() != threadCounters_[localThreadId];
     }
     /*! \brief
      * Mark that no more functions will be assigned during the current step.
@@ -365,6 +391,12 @@ public:
     void setFunctor(ITaskFunctor* f) {
         functor_.reset(f);
         functorBeginBarrier_.open();
+    }
+    /*! \brief
+     * Return whether task is ready to run
+     */
+    bool isReady() const {
+        return functorBeginBarrier_.isOpen();
     }
     /*! \brief
      * Run the functor. The range argument is ignored.

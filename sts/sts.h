@@ -141,27 +141,26 @@ public:
      * \param[in] threadId The Id of the thread to assign to
      * \param[in] range    The range for a loop task to assing. Ignored for basic task.
      */
-    void assign(std::string label, int threadId, Task::Type ttype,
-            Range<Ratio> range, const std::set<int> &uaTaskThreads) {
-        int id = setTask(label, ttype, uaTaskThreads);
+    void assign(std::string label, bool isLoop, int threadId, Range<Ratio> range) {
+        int id = setTask(label, isLoop);
         assert(range.start>=0 && range.end<=1);
         SubTask *t = new SubTask(tasks_[id], range);
         threadSubTasks_[threadId].push_back(t);
-        tasks_[id].pushSubtask(threadId, t);
+        tasks_[id]->pushSubtask(threadId, t);
     }
-    void assign_run(std::string label, int threadId, const std::set<int> &uaTaskThreads = {}) {
-        assign(label, threadId, Task::RUN, Range<Ratio>(1), uaTaskThreads);
+    void assign_run(std::string label, int threadId) {
+        assign(label, false, threadId, Range<Ratio>(1));
     }
     void assign_loop(std::string label, int threadId, Range<Ratio> range) {
-        assign(label, threadId, Task::LOOP, range, {});
+        assign(label, true, threadId, range);
     }
     //! \brief Clear all assignments
     void clearAssignments() {
         for (auto &taskList : threadSubTasks_) {
             taskList.clear();
         }
-        for (auto &task : tasks_) {
-            task.clearSubtasks();
+        for (Task* task : tasks_) {
+            task->clearSubtasks();
         }
     }
     /*! \brief
@@ -200,8 +199,7 @@ public:
         if (!isTaskAssigned(label) || bUseDefaultSchedule_) {
             function();
         } else {
-            tasks_[getTaskId(label)].functor_ = new BasicTaskFunctor<F>(function);
-            tasks_[getTaskId(label)].functorBeginBarrier_.open();
+            tasks_[getTaskId(label)]->setFunctor(new BasicTaskFunctor<F>(function));
         }
     }
     //! Notify threads to start computing the next step
@@ -239,40 +237,35 @@ public:
             assert(taskId == 0); // Default schedule should have only the "default" task with id 0.
             nextStepInternal();  // Default schedule has only a single step and the user doesn't need to call nextStep
         } else if (!isTaskAssigned(label)) {
+            // Task object needed to do reductions
+            assert(red == nullptr);
             for (int i=start; i<end; i++) {
                 body(i);
-            }
-            if (red != nullptr) {
-                red->reduce();
             }
             return;
         } else {
             taskId = getTaskId(label);
         }
-        auto &task = tasks_[taskId];
-        task.reduction_ = red;
-        task.functor_ = new LoopTaskFunctor<F>(body, {start, end});
-        task.functorBeginBarrier_.open();
+        LoopTask* task = dynamic_cast<LoopTask*>(tasks_[taskId]);
+        assert(task != nullptr);
+        task->setReduction(red);
+        task->setFunctor(new LoopTaskFunctor<F>(body, {start, end}));
         int tid = Thread::getId();
         int nst = nextSubTask_[tid];
         SubTask *subtask = nullptr;
         if (nst < getNumSubTasks(tid)) {
             subtask = threadSubTasks_[tid][nst];
         }
-        bool isMyNextTask = (subtask != nullptr) && (&subtask->getTask() == &task);
+        bool isMyNextTask = (subtask != nullptr) && (subtask->getTask() == task);
         // Calling thread should either be assigned to this loop as its next task, or it should be a dummy loop.
         // Allowing the latter gives the main thread the ability to skip a single task and all of its nested loops.
         assert((start == end) || isMyNextTask);
         if (isMyNextTask) {
             assert(threads_[tid].processTask()); // false return value contradicts previous assertion
             auto startWaitTime = sts_clock::now();
-            task.functorEndBarrier_.wait();
-            task.waitTime_ = sts_clock::now() - startWaitTime;
-            // TODO: A smarter reduction would take place before the above wait.
-            if (task.reduction_ != nullptr) {
-                auto startReductionTime = sts_clock::now();
-                static_cast< TaskReduction<T> *>(task.reduction_)->reduce();
-                task.reductionTime_ = sts_clock::now() - startReductionTime;
+            task->wait();
+            if (red != nullptr) {
+                red->reduce();
             }
         }
         // User does not need to call wait for default scheduling
@@ -309,7 +302,7 @@ public:
     void waitForTask(std::string label) {
         assert(isTaskAssigned(label));
         int t = getTaskId(label);
-        tasks_[t].functorEndBarrier_.wait();
+        tasks_[t]->wait();
     }
     //! Wait on all tasks to finish
     void wait() {
@@ -388,7 +381,7 @@ public:
     int getTaskNumThreads(std::string label) {
         assert(isTaskAssigned(label));
         int taskId = getTaskId(label);
-        return tasks_[taskId].getNumThreads();
+        return tasks_[taskId]->getNumThreads();
     }
     /*! \brief
      * Get thread's id for its current task or -1
@@ -450,7 +443,7 @@ private:
         if (subTaskId < 0 || subTaskId >= getNumSubTasks(threadId)) {
             return nullptr;
         }
-        return &threadSubTasks_[threadId][subTaskId]->getTask();
+        return threadSubTasks_[threadId][subTaskId]->getTask();
     }
     bool isTaskAssigned(std::string label) const {
         return (taskLabels_.find(label) != taskLabels_.end());
@@ -476,19 +469,22 @@ private:
      * \param[in] label for task
      * \return task id
      */
-    int setTask(std::string label, Task::Type ttype, const std::set<int> &uaTaskThreads) {
+    int setTask(std::string label, bool isLoop) {
         // TODO: Add asserts for schedule state (using isActive_ variable perhaps)
         assert(Thread::getId() == 0);
         auto it = taskLabels_.find(label);
         if (it != taskLabels_.end()) {
-            // Do not allow changing of task type
-            assert(ttype == tasks_[it->second].getType());
             return it->second;
         }
         else {
             unsigned int v = taskLabels_.size();
             assert(v==tasks_.size());
-            tasks_.emplace_back(ttype, uaTaskThreads);
+            if (isLoop) {
+            tasks_.push_back(new LoopTask());
+            }
+            else {
+            tasks_.push_back(new BasicTask());
+            }
             taskLabels_[label] = v;
             return v;
         }
@@ -500,13 +496,13 @@ private:
      */
     template<typename T>
     void collect(T a, int ttid) {
-        const Task *t = getCurrentTask();
-        // TODO: This is a user error - calling collect outside of a task.
+        const LoopTask* t = dynamic_cast<const LoopTask*>(getCurrentTask());
+        // TODO: This is a user error - calling collect outside of a task or on a non-loop task
         // Currently, we simply ignore the call. How should it be handled?
         if (t == nullptr) {
             return;
         }
-        (static_cast<TaskReduction<T> *>(t->reduction_))->collect(a, ttid);
+        (static_cast<TaskReduction<T> *>(t->getReduction()))->collect(a, ttid);
     }
     //! Notify threads to start computing the next step
     void nextStepInternal() {
@@ -521,10 +517,8 @@ private:
         assert(instance_->isActive_ == false);
         instance_ = this;
         isActive_ = true;
-        for (auto &task: tasks_) {
-            task.functor_ = nullptr;
-            task.functorBeginBarrier_.close();
-            task.functorEndBarrier_.close(task.getNumThreads());
+        for (Task* task: tasks_) {
+            task->clear();
         }
         nextSubTask_.assign(getNumThreads(), 0);
 
@@ -541,7 +535,7 @@ private:
         }
         threads_[0].processQueue(); //Before waiting the OS thread executes its queue
         for(unsigned int i=1;i<tasks_.size();i++) {
-            tasks_[i].functorEndBarrier_.wait();
+            tasks_[i]->wait();
         }
 
         // Wait for all threads to complete step before changing any internal state
@@ -551,13 +545,17 @@ private:
         isActive_ = false;
         instance_ = defaultInstance_;
     }
-    std::deque<Task>  tasks_;  //It is essential this isn't a vector (doesn't get moved when resizing). Is this ok to be a list (linear) or does it need to be a tree? A serial task isn't before a loop. It is both before and after.
+    // TODO: Consider using a tree of tasks if scheduling becomes unwieldy.
+    // Nesting of loops inside basic tasks already makes the logic somewhat hard
+    // to follow with this simple list.
+    std::vector<Task*>  tasks_;
     std::map<std::string,int> taskLabels_;
     std::vector< std::vector<SubTask *> > threadSubTasks_;
     std::vector<int> nextSubTask_; // Index of next subtask for each thread
     bool bUseDefaultSchedule_;
     // "Active" means schedule is between nextStep and wait calls.
     bool isActive_;
+    // Cannot be a vector because Task moving is not allowed (occurs on resizing)
     static std::deque<Thread> threads_;
     static std::atomic<int> stepCounter_;
     static OMBarrier stepCounterBarrier_;

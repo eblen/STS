@@ -25,12 +25,6 @@ bool Thread::processTask() {
     if (subtask == nullptr) {
         return false;
     }
-    auto startWaitTime = sts_clock::now();
-    ITaskFunctor *functor = subtask->getFunctor();
-    auto startTaskTime = sts_clock::now();
-    subtask->waitTime_ = startTaskTime - startWaitTime;
-    functor->run(subtask->range_);
-    subtask->runTime_ = sts_clock::now() - startTaskTime;
-    subtask->markComplete();
+    subtask->run();
     return true;
 }

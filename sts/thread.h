@@ -3,7 +3,6 @@
 
 #include <cassert>
 
-#include <deque>
 #include <memory>
 
 #include <atomic>

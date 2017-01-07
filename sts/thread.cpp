@@ -2,6 +2,8 @@
 
 #include "sts.h"
 
+#include <string>
+
 int thread_local Thread::id_ = 0;
 
 void Thread::doWork() {
@@ -13,18 +15,16 @@ void Thread::doWork() {
 }
 
 void Thread::processQueue() {
-    currentScheduleName_ = STS::getCurrentInstance()->id;
-    while(processTask());
-    assert(currentScheduleName_ == STS::getCurrentInstance()->id);
-}
-
-bool Thread::processTask() {
+    // STS schedule should never change while processing queue
     STS* sts = STS::getCurrentInstance();
-    assert(currentScheduleName_ == sts->id);
+    std::string startScheduleName = sts->id;
     SubTask* subtask = sts->advanceToNextSubTask(id_);
-    if (subtask == nullptr) {
-        return false;
+    while(subtask != nullptr) {
+        STS* sts = STS::getCurrentInstance();
+        assert(sts->id == startScheduleName);
+        if (subtask->run()) {
+            subtask = sts->advanceToNextSubTask(id_);
+        }
     }
-    subtask->run();
-    return true;
+    assert(STS::getCurrentInstance()->id == startScheduleName);
 }

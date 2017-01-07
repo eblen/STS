@@ -3,11 +3,11 @@
 
 #include <cassert>
 
+#include <algorithm>
 #include <deque>
 #include <iostream>
 #include <map>
 #include <memory>
-#include <set>
 #include <string>
 #include <vector>
 
@@ -139,20 +139,51 @@ public:
      *
      * \param[in] label    The label of the task. Needs to match the run()/parallel_for() label
      * \param[in] threadId The Id of the thread to assign to
-     * \param[in] range    The range for a loop task to assing. Ignored for basic task.
+     * \param[in] range    The range for a loop task to assign. Ignored for basic task.
      */
-    void assign(std::string label, bool isLoop, int threadId, Range<Ratio> range) {
-        int id = setTask(label, isLoop);
+    enum class TaskType {BASIC, LOOP, MULTILOOP};
+    void assign(std::string label, TaskType ttype, int threadId, Range<Ratio> range) {
+        int id = setTask(label, ttype);
         assert(range.start>=0 && range.end<=1);
         SubTask *t = new SubTask(tasks_[id], range);
         threadSubTasks_[threadId].push_back(t);
         tasks_[id]->pushSubtask(threadId, t);
     }
     void assign_run(std::string label, int threadId) {
-        assign(label, false, threadId, Range<Ratio>(1));
+        assign(label, TaskType::BASIC, threadId, Range<Ratio>(1));
     }
-    void assign_loop(std::string label, int threadId, Range<Ratio> range) {
-        assign(label, true, threadId, range);
+    void assign_run(std::string label, int threadId, const std::vector<int> &helperThreads) {
+        assign_run(label, threadId);
+        int nthreads = helperThreads.size();
+        int numer = 0;
+        int denom = nthreads;
+        std::string loopTaskLabel = label + "_multiloop";
+        // Main thread of a basic task is always a helper thread too. So add it
+        // as a helper if not already listed.
+        if (std::find(helperThreads.begin(), helperThreads.end(), threadId) == helperThreads.end()) {
+            denom++;
+            numer++;
+            assign(loopTaskLabel, TaskType::MULTILOOP, threadId, {1, denom});
+        }
+        for (int i=0; i<nthreads; i++, numer++) {
+            assign(loopTaskLabel, TaskType::MULTILOOP, helperThreads[i], {{numer, denom},{numer+1, denom}});
+        }
+
+        // Link the basic task with its loop task
+        int parentId = getTaskId(label);
+        int childId  = getTaskId(loopTaskLabel);
+        BasicTask*     parentTask = dynamic_cast<BasicTask*>(tasks_[parentId]);
+        MultiLoopTask* childTask  = dynamic_cast<MultiLoopTask*>(tasks_[childId]);
+        parentTask->setMultiLoop(childTask);
+    }
+    void assign_loop(std::string label, int threadId, const Range<Ratio> range) {
+        assign(label, TaskType::LOOP, threadId, range);
+    }
+    void assign_loop(std::string label, const std::vector<int> &threadIds) {
+        int nthreads = threadIds.size();
+        for (int i=0; i<nthreads; i++) {
+            assign_loop(label, threadIds[i], {{i, nthreads},{i+1, nthreads}});
+        }
     }
     //! \brief Clear all assignments
     void clearAssignments() {
@@ -246,27 +277,23 @@ public:
         } else {
             taskId = getTaskId(label);
         }
-        LoopTask* task = dynamic_cast<LoopTask*>(tasks_[taskId]);
+        Task* task = tasks_[taskId];
         assert(task != nullptr);
         task->setReduction(red);
         task->setFunctor(new LoopTaskFunctor<F>(body, {start, end}));
         int tid = Thread::getId();
-        int nst = nextSubTask_[tid];
-        SubTask *subtask = nullptr;
-        if (nst < getNumSubTasks(tid)) {
-            subtask = threadSubTasks_[tid][nst];
-        }
+        SubTask* subtask = advanceToNextSubTask(tid);
         bool isMyNextTask = (subtask != nullptr) && (subtask->getTask() == task);
         // Calling thread should either be assigned to this loop as its next task, or it should be a dummy loop.
         // Allowing the latter gives the main thread the ability to skip a single task and all of its nested loops.
-        assert((start == end) || isMyNextTask);
+        assert((start == end) || (isMyNextTask && !subtask->isDone()));
         if (isMyNextTask) {
-            assert(threads_[tid].processTask()); // false return value contradicts previous assertion
-            auto startWaitTime = sts_clock::now();
+            subtask->run();
             task->wait();
             if (red != nullptr) {
                 red->reduce();
             }
+            goBackToPreviousSubTask(tid);
         }
         // User does not need to call wait for default scheduling
         if (bUseDefaultSchedule_) {
@@ -338,19 +365,46 @@ public:
         return instance_;
     }
     /*! \brief
-     * Advances to and returns the next subtask for the given thread
+     * Returns the next subtask for the given thread and updates internal
+     * next subtask pointer.
      *
      * \param[in] threadId   Thread Id
      * \returns pointer to thread's next subtask
      */
-    SubTask *advanceToNextSubTask(int threadId) {
-        int st = nextSubTask_[threadId]++;
-        if (st >= getNumSubTasks(threadId)) {
-            return nullptr;
+    SubTask* advanceToNextSubTask(int threadId) {
+        int &st = nextSubTask_[threadId];
+        for (; st < getNumSubTasks(threadId); st++) {
+            if (!threadSubTasks_[threadId][st]->isDone()) {
+                // return this subtask but increment pointer to next subtask
+                return threadSubTasks_[threadId][st++];
+            }
         }
-        else {
-            return threadSubTasks_[threadId][st];
+        return nullptr;
+    }
+    /*! \brief
+     * Go back to the last unfinished subtask for the given thread.
+     *
+     * This function is useful when basic tasks need to run internal loops and
+     * then resume. It is purely for bookkeeping, and so no value is returned.
+     *
+     * \param[in] threadId   Thread Id
+     */
+    void goBackToPreviousSubTask(int threadId) {
+        int &st = nextSubTask_[threadId];
+        // Always go back at least once, regardless of finished status.
+        // Multiloops, for example, may not be finished when this function is
+        // called, but we still want to go back to the containing subtask.
+        st -= 2;
+        assert(st >= 0);
+        for (; st >= 0; st--) {
+            if (!threadSubTasks_[threadId][st]->isDone()) {
+                // Index (st) is of the *next* subtask, not the current subtask
+                st++;
+                return;
+            }
         }
+        // Means an attempt to rewind, but no prior tasks are unfinished.
+        assert(false);
     }
     /*! \brief
      * Get number of subtasks assigned to a thread
@@ -469,7 +523,7 @@ private:
      * \param[in] label for task
      * \return task id
      */
-    int setTask(std::string label, bool isLoop) {
+    int setTask(std::string label, TaskType ttype) {
         // TODO: Add asserts for schedule state (using isActive_ variable perhaps)
         assert(Thread::getId() == 0);
         auto it = taskLabels_.find(label);
@@ -479,11 +533,16 @@ private:
         else {
             unsigned int v = taskLabels_.size();
             assert(v==tasks_.size());
-            if (isLoop) {
-            tasks_.push_back(new LoopTask());
-            }
-            else {
-            tasks_.push_back(new BasicTask());
+            switch (ttype) {
+            case TaskType::BASIC:
+                tasks_.push_back(new BasicTask());
+                break;
+            case TaskType::LOOP:
+                tasks_.push_back(new LoopTask());
+                break;
+            case TaskType::MULTILOOP:
+                tasks_.push_back(new MultiLoopTask());
+                break;
             }
             taskLabels_[label] = v;
             return v;
@@ -496,13 +555,17 @@ private:
      */
     template<typename T>
     void collect(T a, int ttid) {
-        const LoopTask* t = dynamic_cast<const LoopTask*>(getCurrentTask());
-        // TODO: This is a user error - calling collect outside of a task or on a non-loop task
-        // Currently, we simply ignore the call. How should it be handled?
+        const Task* t = getCurrentTask();
+        // TODO: How to handle these user errors - calling collect outside of a
+        // task or for a task without a reduction?
         if (t == nullptr) {
             return;
         }
-        (static_cast<TaskReduction<T> *>(t->getReduction()))->collect(a, ttid);
+        TaskReduction<T>* tr = (static_cast<TaskReduction<T> *>(t->getReduction()));
+        if (tr == nullptr) {
+            return;
+        }
+        tr->collect(a, ttid);
     }
     //! Notify threads to start computing the next step
     void nextStepInternal() {
@@ -518,6 +581,7 @@ private:
         instance_ = this;
         isActive_ = true;
         for (Task* task: tasks_) {
+            task->restart();
             task->clear();
         }
         nextSubTask_.assign(getNumThreads(), 0);

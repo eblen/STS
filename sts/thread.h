@@ -6,11 +6,9 @@
 #include <memory>
 
 #include <atomic>
-#include <string>
 #include <thread>
 
 #include "range.h"
-#include "task.h"
 
 #if (__GNUC__ == 4 && __GNUC_MINOR__ <= 7) || (defined __ICC && __ICC <= 1400)
 #define thread_local __thread
@@ -34,7 +32,7 @@ public:
      *
      * \param[in] id   Id given to this thread. 0 is the OS thread.
      */
-    Thread(int id) :currentScheduleName_("") {
+    Thread(int id) {
         if (id!=0) {
             thread_.reset(new std::thread([=](){id_=id; doWork();}));
         }
@@ -50,12 +48,6 @@ public:
      * threads from Thread::doWork
      */
     void processQueue();
-    /*! \brief
-     * Execute the next subtask in the queue
-     *
-     * \returns whether work remains for current step
-     */
-    bool processTask();
     //! Wait for thread to finish
     void join() { if (thread_) thread_->join(); }
     /*! \brief
@@ -72,7 +64,6 @@ private:
 
     std::unique_ptr<std::thread> thread_;
     static thread_local int id_;
-    std::string currentScheduleName_;
 };
 
 #endif // STS_THREAD_H

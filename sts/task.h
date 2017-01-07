@@ -9,6 +9,7 @@
 
 #include "barrier.h"
 #include "range.h"
+#include "thread.h"
 
 using sts_clock = std::chrono::steady_clock;
 
@@ -63,8 +64,38 @@ private:
     F func_;
 };
 
-// Forward declaration
-class SubTask;
+class Task;
+
+/*! \internal \brief
+ * The portion of a task done by one thread
+ *
+ * Contains all data and functions needed to execute the subtask, along with
+ * timing variables that can be used to record wait and run times.
+ */
+class SubTask {
+public:
+    /*! \brief
+     * Constructor
+     *
+     * \param[in] task     The task this is part of.
+     * \param[in] range    Out of a possible range from 0 to 1, the section in
+                           this part. Ignored for basic tasks.
+     */
+    SubTask(Task *task, Range<Ratio> range) : task_(task), range_(range),
+    isDone_(false) {}
+    /*! \brief
+     * Run the subtask
+     */
+    bool run();
+    const Task *getTask() const;
+    bool isDone() const;
+    void setDone(bool isDone);
+
+    const Range<Ratio> range_;     /**< Range (out of [0,1]) of loop part */
+private:
+    Task *task_;             /**< Reference to main task */
+    bool isDone_;
+};
 
 /*! \internal \brief
  * Root task class that handles the storage and bookkeeping of subtasks,
@@ -79,14 +110,14 @@ class SubTask;
  */
 class Task {
 public:
-    Task() :numThreads_(0) {}
+    Task() :numThreads_(0), reduction_(nullptr) {}
     /*! \brief
      * Add a new subtask for this task
      *
      * \param[in] threadId  thread to which this subtask is assigned
      * \param[in] t         subtask
      */
-    void pushSubtask(int threadId, SubTask const* t) {
+    void pushSubtask(int threadId, SubTask* t) {
         subtasks_.push_back(t);
         if (threadTaskIds_.find(threadId) == threadTaskIds_.end()) {
             threadTaskIds_[threadId] = numThreads_;
@@ -115,62 +146,44 @@ public:
         }
         return (*id).first;
     }
-    virtual void setFunctor(ITaskFunctor *) = 0;
-    virtual void run(Range<Ratio>) = 0;
-    virtual void wait() = 0;
-    virtual void clear() = 0;
+    void restart() {
+        for (SubTask* st : subtasks_) {
+            st->setDone(false);
+        }
+    }
+    void* getReduction() const {
+        return reduction_;
+    }
+    void setReduction(void* r) {
+        reduction_ = r;
+    }
+    virtual void  setFunctor(ITaskFunctor *) = 0;
+    virtual bool  run(Range<Ratio>) = 0;
+    virtual void  wait() = 0;
+    virtual void  clear() = 0;
     virtual ~Task() {}
+protected:
+    void* reduction_;
 private:
     //! All subtasks of this task. One for each section of a loop. One for a basic task.
-    std::vector<SubTask const*> subtasks_; //!< Subtasks to be executed by a single thread
+    std::vector<SubTask*> subtasks_; //!< Subtasks to be executed by a single thread
     int numThreads_;
     //! Map STS thread id to an id only for this task (task ids are consecutive starting from 0)
     std::map<int, int> threadTaskIds_;
 };
 
-class BasicTask : public Task {
-public:
-    BasicTask() : Task(), functor_(nullptr) {}
-    void setFunctor(ITaskFunctor *f) {
-        functor_ = f;
-        functorBeginBarrier_.open();
-    }
-    void run(Range<Ratio> range) {
-        functorBeginBarrier_.wait();
-        functor_->run(range);
-        functorEndBarrier_.markArrival();
-    }
-    void wait() {
-        functorEndBarrier_.wait();
-    }
-    void clear() {
-        functor_ = nullptr;
-        functorBeginBarrier_.close();
-        functorEndBarrier_.close(this->getNumThreads());
-    }
-private:
-    ITaskFunctor *functor_;      //!< The function/loop to execute
-    MOBarrier functorBeginBarrier_; //!< Many-to-one barrier to sync threads at beginning of loop
-    OMBarrier functorEndBarrier_; //!< One-to-many barrier to sync threads at end of loop
-};
-
 class LoopTask : public Task {
 public:
-    LoopTask() : Task(), reduction_(nullptr), functor_(nullptr) {}
+    LoopTask() : Task(), functor_(nullptr) {}
     void setFunctor(ITaskFunctor *f) {
         functor_ = f;
         functorBeginBarrier_.open();
     }
-    void* getReduction() const {
-        return reduction_;
-    }
-    void setReduction(void *r) {
-        reduction_ = r;
-    }
-    void run(Range<Ratio> range) {
+    bool run(Range<Ratio> range) {
         functorBeginBarrier_.wait();
         functor_->run(range);
         functorEndBarrier_.markArrival();
+        return true;
     }
     void wait() {
         functorEndBarrier_.wait();
@@ -181,7 +194,6 @@ public:
         functorEndBarrier_.close(this->getNumThreads());
     }
 private:
-    void *reduction_; //!< Reduction function to execute after task completes
     ITaskFunctor *functor_;      //!< The function/loop to execute
     MOBarrier functorBeginBarrier_; //!< Many-to-one barrier to sync threads at beginning of loop
     OMBarrier functorEndBarrier_; //!< One-to-many barrier to sync threads at end of loop
@@ -189,46 +201,75 @@ private:
 
 class MultiLoopTask : public Task {
 public:
-    void run(Range<Ratio>) {
-        // not yet implemented
+    MultiLoopTask() : Task(), functor_(nullptr),
+    functorCounter_(0) {}
+    void setFunctor(ITaskFunctor *f) {
+        functorEndBarrier_.close(this->getNumThreads());
+        functor_ = f;
+        functorCounter_++;
+    }
+    void markFinished() {
+        functorCounter_ = -1;
+    }
+    bool run(Range<Ratio> range) {
+        int localThreadId = this->getThreadId(Thread::getId());
+        wait_until_not(functorCounter_, threadCounters_[localThreadId]++);
+        if (functorCounter_ == -1) {
+            return true;
+        }
+        functor_->run(range);
+        functorEndBarrier_.markArrival();
+        return false;
+    }
+    void wait() {
+        functorEndBarrier_.wait();
+    }
+    void clear() {
+        functorCounter_ = 0;
+        functor_ = nullptr;
+        functorEndBarrier_.close(this->getNumThreads());
+        threadCounters_.assign(this->getNumThreads(),0);
+    }
+private:
+    ITaskFunctor *functor_;      //!< The function/loop to execute
+    OMBarrier functorEndBarrier_; //!< One-to-many barrier to sync threads at end of loop
+    std::atomic<int> functorCounter_;
+    std::vector<int> threadCounters_;
+};
+
+class BasicTask : public Task {
+public:
+    BasicTask() : Task(), functor_(nullptr), containedMultiLoopTask_(nullptr) {}
+    void setFunctor(ITaskFunctor *f) {
+        functor_ = f;
+        functorBeginBarrier_.open();
+    }
+    bool run(Range<Ratio> range) {
+        functorBeginBarrier_.wait();
+        functor_->run(range);
+        functorEndBarrier_.markArrival();
+        if (containedMultiLoopTask_ != nullptr) {
+            containedMultiLoopTask_->markFinished();
+        }
+        return true;
+    }
+    void setMultiLoop(MultiLoopTask *mlt) {
+        assert(containedMultiLoopTask_ == nullptr);
+        containedMultiLoopTask_ = mlt;
+    }
+    void wait() {
+        functorEndBarrier_.wait();
+    }
+    void clear() {
+        functor_ = nullptr;
+        functorBeginBarrier_.close();
+        functorEndBarrier_.close(this->getNumThreads());
     }
 private:
     ITaskFunctor *functor_;      //!< The function/loop to execute
     MOBarrier functorBeginBarrier_; //!< Many-to-one barrier to sync threads at beginning of loop
     OMBarrier functorEndBarrier_; //!< One-to-many barrier to sync threads at end of loop
-};
-
-/*! \internal \brief
- * The portion of a task done by one thread
- *
- * Contains all data and functions needed to execute the subtask, along with
- * timing variables that can be used to record wait and run times.
- */
-class SubTask {
-public:
-    /*! \brief
-     * Constructor
-     *
-     * \param[in] task     The task this is part of.
-     * \param[in] range    Out of a possible range from 0 to 1, the section in
-                           this part. Ignored for basic tasks.
-     */
-    SubTask(Task *task, Range<Ratio> range) : task_(task), range_(range) {}
-    /*! \brief
-     * Run the subtask
-     */
-    void run() const {
-        task_->run(range_);
-    }
-    const Task *getTask() {
-        return task_;
-    }
-
-    sts_clock::duration waitTime_; /**< Time spent until task was ready */
-    sts_clock::duration runTime_;  /**< Time spent executing subtask  */
-    const Range<Ratio> range_;     /**< Range (out of [0,1]) of loop part */
-private:
-    Task *task_;             /**< Reference to main task */
+    MultiLoopTask* containedMultiLoopTask_;
 };
 
 #endif // STS_TASK_H

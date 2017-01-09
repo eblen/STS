@@ -1,0 +1,28 @@
+STS (static thread scheduler) Design and Usage
+
+The STS (static thread scheduler) library supports simple, static (as opposed to dynamic), and flexible scheduling of threads for applications that require maximum performance. STS achieves performance by minimizing overhead (static) and allowing full control over thread schedules (flexible).
+
+Prior to any other STS calls, programs should call STS::startup(nthreads), where nthreads is the maximum number of threads used by the application. Likewise, STS::shutdown() should be called when threading is no longer needed, similar to MPI_Finalize().
+
+The primary data type is the STS class, which implements a single STS schedule. Applications may use multiple STS schedules in a single run. In fact, between startup and shutdown, exactly one STS schedule is always active, and switching of schedules is done explicitly by specific calls (see below). Note that there is only a single thread pool, which is used by all schedules. Since only one schedule is active at a time, and since all tasks must be completed on a schedule before switching, no conflicts can arise.
+
+At startup, a "default" schedule is active. For simple programs and portions of complex programs, this schedule may be sufficient. It automatically parallelizes loops by dividing all iterations evenly among all threads. More fine-grained control requires creating and then later switching to (activating) an STS schedule instance. The STS constructor optionally takes an std::string argument, to provide a name for the schedule. Having a name allows for later retrieving created schedules without having to explicitly store a reference to them. Often, schedules are used in a different code region than where they are created.
+
+To switch to a schedule, call "nextStep" on the schedule instance while the default schedule is active, and call "wait" to swap back to the default schedule. The "wait" call waits for all assigned tasks to be completed. Note that STS only allows switching to/from the default schedule. No nesting of schedules is allowed. The "nextStep" call restarts the schedule and resets all threads to their first assignment, and it is not allowed to call "nextStep" while a schedule is active (between "nextStep" and "wait" calls) nor to call "wait" on an inactive schedule.
+
+To create a schedule, use the "assign_run" and "assign_loop" methods of the STS class to assign specific threads to specific, named regions of code. See the examples provided. Note that order is important. Threads must be assigned tasks in the order in which they will execute them. Note also that nesting is limited to loops within a run task. However, outside of the default schedule, each loop must be contained within a run task. A single run method may have any number of loops, but no nesting among loops is allowed.
+
+Note that it is possible to set a schedule to use default scheduling with "setDefaultSchedule". This can be useful during development to generate a lower-bound on performance or to quickly get a schedule to work if there are problems getting assignments to work correctly. In this mode, assignments are ignored, run tasks are run by thread 0, and loops are split among all threads.
+
+The only requirement imposed by nesting is that the main thread (the thread assigned to the run section) must also be assigned to each nested loop. This is necessary because the main thread needs to wait for the loop to complete before continuing the remainder of its run task. No other requirements are imposed though, and thus it is possible, for example, for threads to switch back and forth between loops inside different run sections.
+
+Finally, use the "run" and "parallel_for" methods to execute tasks. These methods input the task label and a C++ lambda, which is the work to be done. These methods simply assign the lambda to the particular task and signal to waiting threads that the work is now available. Thus, it doesn't matter which thread calls the method.
+
+Note that it is possible to have tasks that are not assigned. If unassigned, run tasks will be done by thread 0, essentially ignoring the "run" function call, and unassigned "parallel_for" calls will be serialized and ran by the main thread in the containing run section. This can be useful during development. The developer can go ahead and modify code regions and loops to use STS and then later worry about actual thread assignments.
+
+Other included features:
+1) skip_loop and skip_run methods are provided for cases where tasks may run conditionally. Note that for any task assigned to a thread, the thread must either run it or skip it. STS does not automatically skip ahead.
+
+2) A simple barrier class is provided, which will pause all threads up to a given number. Then all threads will be released. Note that this barrier only counts the number of times it is "entered" and does not work with a specific subset of threads.
+
+3) A reduction class is provided for collecting values within a loop. These values are reduced (summed) when the loop is completed, and the result is made available inside the reduction class. See example 5. It should be fairly easy to create custom reduction classes (see sts/reduce.h) if a simple summation is not sufficient.

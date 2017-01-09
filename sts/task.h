@@ -69,8 +69,8 @@ class Task;
 /*! \internal \brief
  * The portion of a task done by one thread
  *
- * Contains all data and functions needed to execute the subtask, along with
- * timing variables that can be used to record wait and run times.
+ * Contains run() method to execute subtask directly, along with needed
+ * information (task and range).
  */
 class SubTask {
 public:
@@ -98,15 +98,16 @@ private:
 };
 
 /*! \internal \brief
- * Root task class that handles the storage and bookkeeping of subtasks,
- * operations needed by all task classes.
+ * Base task class that handles the storage and bookkeeping of subtasks,
+ * common operations needed by all subclasses. It also stored reduction
+ * functions.
  *
  * Each subtask is assigned to a single thread, and this class assigns a
  * Task-specific thread id to all participating threads. Subclasses store
- * the actual function and handle execution of the task.
+ * the actual function and actually execute the task.
  *
  * Note that for non-loop tasks, only a single subtask and thread are
- * needed.
+ * needed, and thus much of this infrastructure is unused.
  */
 class Task {
 public:
@@ -151,15 +152,28 @@ public:
             st->setDone(false);
         }
     }
+    //! \brief Get reduction function
     void* getReduction() const {
         return reduction_;
     }
+    /*! \brief
+     * Store a new reduction function
+     *
+     * This class only stores the reduction. Clients and subclasses are
+     * responsible for making use of the reduction.
+     *
+     * \param[in] r reduction function
+     */
     void setReduction(void* r) {
         reduction_ = r;
     }
+    //! \brief Set the functor (work) to be done
     virtual void  setFunctor(ITaskFunctor *) = 0;
+    //! \brief Run the functor in the specified range
     virtual bool  run(Range<Ratio>) = 0;
+    //! \brief Wait for the functor to complete
     virtual void  wait() = 0;
+    //! \brief Reset the task for new work
     virtual void  clear() = 0;
     virtual ~Task() {}
 protected:
@@ -172,22 +186,59 @@ private:
     std::map<int, int> threadTaskIds_;
 };
 
+/*! \brief
+ * Class for loop tasks
+ */
 class LoopTask : public Task {
 public:
     LoopTask() : Task(), functor_(nullptr) {}
+    /*! \brief
+     * Set the functor (work) to be done.
+     *
+     * This releases a barrier so that threads who have or will call run can
+     * proceed.
+     *
+     * This function is not thread safe and is intended to be called only by
+     * the main thread (thread running the containing basic task or thread 0
+     * for the default schedule).
+     *
+     * \param[in] f Task functor
+     */
     void setFunctor(ITaskFunctor *f) {
         functor_ = f;
         functorBeginBarrier_.open();
     }
+    /*! \brief
+     * Run the functor for the specified range
+     *
+     * This function is thread-safe and intended to be called by all
+     * participating threads. It synchronizes threads and marks when they
+     * complete.
+     *
+     * \param[in] range Range of function to run
+     * \return whether all functors have been assigned for this task, which
+     *         is always true for a LoopTask after running its single task.
+     */
     bool run(Range<Ratio> range) {
         functorBeginBarrier_.wait();
         functor_->run(range);
         functorEndBarrier_.markArrival();
         return true;
     }
+    /*! \brief
+     * Wait for all participating threads to finish
+     *
+     * Normally called by main thread but can be called by any thread to
+     * wait for task to complete. Is thread-safe.
+     */
     void wait() {
         functorEndBarrier_.wait();
     }
+    /*! \brief
+     * Reset this object for running a new functor. Nullifies any stored
+     * functors and resets barriers. Intended only to be called by thread 0
+     * in-between steps.
+     */
     void clear() {
         functor_ = nullptr;
         functorBeginBarrier_.close();
@@ -203,14 +254,45 @@ class MultiLoopTask : public Task {
 public:
     MultiLoopTask() : Task(), functor_(nullptr),
     functorCounter_(0) {}
+    /*! \brief
+     * Set the functor (work) to be done.
+     *
+     * Unlike LoopTask, an atomic counter is incremented when a new function is
+     * assigned. More than a simple barrier is necessary to support multiple
+     * functor assignments within a single step.
+     *
+     * This function is not thread safe and is intended to be called only by
+     * the main thread (thread running the containing basic task). MultiLoops
+     * do not occur with a default schedule.
+     *
+     * \param[in] f Task functor
+     */
     void setFunctor(ITaskFunctor *f) {
         functorEndBarrier_.close(this->getNumThreads());
         functor_ = f;
         functorCounter_++;
     }
+    /*! \brief
+     * Mark that no more functions will be assigned during the current step.
+     *
+     * While thread-safe, this is intended to only be called by the main thread
+     * once the containing basic task completes.
+     */
     void markFinished() {
         functorCounter_ = -1;
     }
+    /*! \brief
+     * Run the functor for the specified range
+     *
+     * This function is thread-safe and intended to be called by all
+     * participating threads. It synchronizes threads and marks when they
+     * complete. Unlike LoopTask, each thread has a unique counter used to
+     * synchronize running multiple functors.
+     *
+     * \param[in] range Range of function to run
+     * \return whether all functors have been assigned for this task. If
+     *         not, thread should call run again.
+     */
     bool run(Range<Ratio> range) {
         int localThreadId = this->getThreadId(Thread::getId());
         wait_until_not(functorCounter_, threadCounters_[localThreadId]++);
@@ -221,9 +303,20 @@ public:
         functorEndBarrier_.markArrival();
         return false;
     }
+    /*! \brief
+     * Wait for all participating threads to finish
+     *
+     * Normally called by main thread but can be called by any thread to
+     * wait for task to complete. Is thread-safe.
+     */
     void wait() {
         functorEndBarrier_.wait();
     }
+    /*! \brief
+     * Reset this object for running a new set of functors. Nullifies any
+     * stored functors and resets counters and end barrier. Intended only to
+     * be called by thread 0 in-between steps.
+     */
     void clear() {
         functorCounter_ = 0;
         functor_ = nullptr;
@@ -244,6 +337,16 @@ public:
         functor_ = f;
         functorBeginBarrier_.open();
     }
+    /*! \brief
+     * Run the functor. The range argument is ignored.
+     *
+     * This function is thread-safe and intended to be called by the thread
+     * assigned to this task. Thread waits until functor is available.
+     *
+     * \param[in] range Range to run - ignored.
+     * \return whether all functors have been assigned for this task, which
+     *         is always true for a BasicTask after running its single task.
+     */
     bool run(Range<Ratio> range) {
         functorBeginBarrier_.wait();
         functor_->run(range);
@@ -253,13 +356,31 @@ public:
         }
         return true;
     }
+    /*! \brief
+     * Set that the given multiloop task is contained within this task. This is
+     * necessary so that this task can mark the multiloop task as finished once
+     * it itself completes.
+     *
+     * \param[in] mlt MultiLoopTask contained in this task.
+     */
     void setMultiLoop(MultiLoopTask *mlt) {
         assert(containedMultiLoopTask_ == nullptr);
         containedMultiLoopTask_ = mlt;
     }
+    /*! \brief
+     * Wait for all participating threads to finish
+     *
+     * Normally called by main thread but can be called by any thread to
+     * wait for task to complete. Is thread-safe.
+     */
     void wait() {
         functorEndBarrier_.wait();
     }
+    /*! \brief
+     * Reset this object for running a new functor. Nullifies any stored
+     * functors and resets barriers. Intended only to be called by thread 0
+     * in-between steps.
+     */
     void clear() {
         functor_ = nullptr;
         functorBeginBarrier_.close();

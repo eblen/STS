@@ -19,40 +19,8 @@
 #include "task.h"
 #include "thread.h"
 
-/* Overall design:
- * The framework can execute simple tasks (via "run") and execute loops in
- * parallel (via "parallel_for"). It supports two run modi: either with an
- * explicit schedule or with a default schedule. With the default schedule
- * tasks are run in serial and only loop level parallelism is used. This is
- * useful if either the tasks are not yet known or only simple parallelism is
- * needed. With an explicit schedule one can specify which task runs on which
- * thread and in which order (based on the order of task assignment). Loops
- * can be split among the threads using ratios (e.g. thread 0 does 1/3 of
- * the loop while thread 1 does the remaining 2/3). The idea is that this
- * schedule is either computed by the user of the framework using "assign"
- * or automatically computed by the framework using "reschedule." (Automatic
- * scheduling is not yet implemented.) Timing data is recorded for each task
- * so that adjustments can be made (or not) after each "step." One "step"
- * contains a number of scheduled tasks and a new step starts when "nextStep"
- * is called. Normally, a step will be one iteration of a main loop, like a
- * time step in MD, but this is of course not required. The part of a task
- * done by a thread is called a sub-task. A simple task is always fully
- * done by one thread and for a loop-task the range done by each thread is
- * specified. The whole design is lock free and only relies on atomics.
- */
-
 /*! \internal \brief
- * Static task scheduler
- *
- * Allows running an asynchronous function with run() and execute loops in parallel
- * with parallel_for(). The default schedule only uses loop level parallelism and
- * executes run() functions synchronously. A schedule with task level parallelism
- * is created automatically by calling reschedule() or manual by calling assign().
- * After the queue of tasks in one schedule are completed, one can do one of
- * three things for the next step:
- * a) call nextStep() and reuse the schedule
- * b) call reschedule() to let the scheduler automatically compute a new schedule
- * c) call clearAssignments(), assign(), and nextStep() to manual specify schedule
+ * Static Thread Scheduler
  */
 class STS {
 public:
@@ -64,7 +32,7 @@ public:
     const std::string id;
     /*! \brief
      * Startup STS and set the number of threads.
-     * No STS functions should be called before Startup.
+     * No STS functions should be called before startup.
      */
     static void startup(size_t numThreads) {
         assert(numThreads > 0);
@@ -132,14 +100,22 @@ public:
     /*! \brief
      * Assign task to a thread
      *
+     * This is the most generic assign function, which does the actual work.
+     * Most of the time, applications should use one of the more specific
+     * assign functions.
+     *
+     * Note that this function can only assign one thread at a time, whereas
+     * some other assign functions can assign a range of threads.
+     *
      * If a range for a loop task is specified, only that section of the loop is assigned.
      * In that case it is important to assign the remaining loop out of [0,1] also to
      * some other thread. It is valid to assign multiple parts of a loop to the same thread.
      * The order of assign calls specifies in which order the thread executes the tasks.
      *
-     * \param[in] label    The label of the task. Needs to match the run()/parallel_for() label
-     * \param[in] threadId The Id of the thread to assign to
-     * \param[in] range    The range for a loop task to assign. Ignored for basic task.
+     * \param[in] label    Label of the task. Needs to match the run()/parallel_for() label
+     * \param[in] ttype    Task type
+     * \param[in] threadId Id of thread assigned the work
+     * \param[in] range    Assigned range for a loop task. Ignored for a basic task.
      */
     enum class TaskType {BASIC, LOOP, MULTILOOP};
     void assign(std::string label, TaskType ttype, int threadId, Range<Ratio> range) {
@@ -149,9 +125,26 @@ public:
         threadSubTasks_[threadId].push_back(t);
         tasks_[id]->pushSubtask(threadId, t);
     }
+    /*! \brief
+     * Assign a basic task to a single thread
+     *
+     * \param[in] label    Label of the task
+     * \param[in] threadId Id of thread assigned the work
+     */
     void assign_run(std::string label, int threadId) {
         assign(label, TaskType::BASIC, threadId, Range<Ratio>(1));
     }
+    /*! \brief
+     * Assign a basic task to a single thread along with a set of helper threads
+     * to execute contained loops.
+     *
+     * Note that helper threads wait until the basic task completes. Loops should
+     * be assigned explicitly if more fine-grained control is needed.
+     *
+     * \param[in] label         Label of the task
+     * \param[in] threadId      Id of thread assigned the work
+     * \param[in] helperThreads vector of threads that execute contained loops
+     */
     void assign_run(std::string label, int threadId, const std::vector<int> &helperThreads) {
         assign_run(label, threadId);
         int nthreads = helperThreads.size();
@@ -176,9 +169,23 @@ public:
         MultiLoopTask* childTask  = dynamic_cast<MultiLoopTask*>(tasks_[childId]);
         parentTask->setMultiLoop(childTask);
     }
+    /*! \brief
+     * Assign a loop task to a single thread
+     *
+     * \param[in] label    Label of the task
+     * \param[in] threadId Id of thread assigned the work
+     * \param[in] range    range of loop executed by this thread
+     */
     void assign_loop(std::string label, int threadId, const Range<Ratio> range) {
         assign(label, TaskType::LOOP, threadId, range);
     }
+    /*! \brief
+     * Assign a loop task to a vector of threads. This will split the loop
+     * evenly among the given threads.
+     *
+     * \param[in] label     Label of the task
+     * \param[in] threadIds Id of threads assigned the work
+     */
     void assign_loop(std::string label, const std::vector<int> &threadIds) {
         int nthreads = threadIds.size();
         for (int i=0; i<nthreads; i++) {
@@ -195,7 +202,7 @@ public:
         }
     }
     /*! \brief
-     * Set the default schedule
+     * Set this schedule to use the default schedule
      *
      * All previous assignments are cleared. Loops are divided evenly among all threads and
      * non-loop tasks simply run on the invoking thread,
@@ -387,7 +394,7 @@ public:
      * This function is useful when basic tasks need to run internal loops and
      * then resume. It is purely for bookkeeping, and so no value is returned.
      *
-     * \param[in] threadId   Thread Id
+     * \param[in] threadId Thread Id
      */
     void goBackToPreviousSubTask(int threadId) {
         int &st = nextSubTask_[threadId];

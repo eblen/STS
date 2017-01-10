@@ -9,6 +9,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <atomic>
@@ -121,7 +122,7 @@ public:
     void assign(std::string label, TaskType ttype, int threadId, Range<Ratio> range) {
         int id = setTask(label, ttype);
         assert(range.start>=0 && range.end<=1);
-        SubTask *t = new SubTask(tasks_[id], range);
+        SubTask* t = new SubTask(tasks_[id].get(), range);
         threadSubTasks_[threadId].push_back(t);
         tasks_[id]->pushSubtask(threadId, t);
     }
@@ -165,8 +166,8 @@ public:
         // Link the basic task with its loop task
         int parentId = getTaskId(label);
         int childId  = getTaskId(loopTaskLabel);
-        BasicTask*     parentTask = dynamic_cast<BasicTask*>(tasks_[parentId]);
-        MultiLoopTask* childTask  = dynamic_cast<MultiLoopTask*>(tasks_[childId]);
+        BasicTask*     parentTask = dynamic_cast<BasicTask*>(tasks_[parentId].get());
+        MultiLoopTask* childTask  = dynamic_cast<MultiLoopTask*>(tasks_[childId].get());
         parentTask->setMultiLoop(childTask);
     }
     /*! \brief
@@ -197,7 +198,7 @@ public:
         for (auto &taskList : threadSubTasks_) {
             taskList.clear();
         }
-        for (Task* task : tasks_) {
+        for (std::unique_ptr<Task> &task : tasks_) {
             task->clearSubtasks();
         }
     }
@@ -284,7 +285,7 @@ public:
         } else {
             taskId = getTaskId(label);
         }
-        Task* task = tasks_[taskId];
+        Task* task = tasks_[taskId].get();
         assert(task != nullptr);
         task->setReduction(red);
         task->setFunctor(new LoopTaskFunctor<F>(body, {start, end}));
@@ -542,13 +543,13 @@ private:
             assert(v==tasks_.size());
             switch (ttype) {
             case TaskType::BASIC:
-                tasks_.push_back(new BasicTask());
+                tasks_.push_back(std::unique_ptr<Task>(new BasicTask()));
                 break;
             case TaskType::LOOP:
-                tasks_.push_back(new LoopTask());
+                tasks_.push_back(std::unique_ptr<Task>(new LoopTask()));
                 break;
             case TaskType::MULTILOOP:
-                tasks_.push_back(new MultiLoopTask());
+                tasks_.push_back(std::unique_ptr<Task>(new MultiLoopTask()));
                 break;
             }
             taskLabels_[label] = v;
@@ -587,7 +588,7 @@ private:
         assert(instance_->isActive_ == false);
         instance_ = this;
         isActive_ = true;
-        for (Task* task: tasks_) {
+        for (std::unique_ptr<Task> &task: tasks_) {
             task->restart();
         }
         nextSubTask_.assign(getNumThreads(), 0);
@@ -618,7 +619,7 @@ private:
     // TODO: Consider using a tree of tasks if scheduling becomes unwieldy.
     // Nesting of loops inside basic tasks already makes the logic somewhat hard
     // to follow with this simple list.
-    std::vector<Task*>  tasks_;
+    std::vector<std::unique_ptr<Task>>  tasks_;
     std::map<std::string,int> taskLabels_;
     std::vector< std::vector<SubTask *> > threadSubTasks_;
     std::vector<int> nextSubTask_; // Index of next subtask for each thread

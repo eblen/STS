@@ -115,11 +115,13 @@ public:
     /*! \brief
      * Add a new subtask for this task
      *
+     * Note: Task takes ownership of passed subtask.
+     *
      * \param[in] threadId  thread to which this subtask is assigned
      * \param[in] t         subtask
      */
     void pushSubtask(int threadId, SubTask* t) {
-        subtasks_.push_back(t);
+        subtasks_.emplace_back(t);
         if (threadTaskIds_.find(threadId) == threadTaskIds_.end()) {
             threadTaskIds_[threadId] = numThreads_;
             numThreads_++;
@@ -153,7 +155,7 @@ public:
      * each step.
      */
     void restart() {
-        for (SubTask* st : subtasks_) {
+        for (std::unique_ptr<SubTask> &st : subtasks_) {
             st->setDone(false);
         }
         init();
@@ -174,7 +176,7 @@ public:
         reduction_ = r;
     }
     //! \brief Set the functor (work) to be done
-    virtual void  setFunctor(ITaskFunctor *) = 0;
+    virtual void  setFunctor(ITaskFunctor*) = 0;
     //! \brief Run the functor in the specified range
     virtual bool  run(Range<Ratio>) = 0;
     //! \brief Wait for the functor to complete
@@ -190,7 +192,7 @@ private:
      */
     virtual void  init() = 0;
     //! All subtasks of this task. One for each section of a loop. One for a basic task.
-    std::vector<SubTask*> subtasks_; //!< Subtasks to be executed by a single thread
+    std::vector<std::unique_ptr<SubTask>> subtasks_; //!< Subtasks to be executed by a single thread
     int numThreads_;
     //! Map STS thread id to an id only for this task (task ids are consecutive starting from 0)
     std::map<int, int> threadTaskIds_;
@@ -205,6 +207,8 @@ public:
     /*! \brief
      * Set the functor (work) to be done.
      *
+     * Note: Takes ownership of passed functor
+     *
      * This releases a barrier so that threads who have or will call run can
      * proceed.
      *
@@ -214,8 +218,8 @@ public:
      *
      * \param[in] f Task functor
      */
-    void setFunctor(ITaskFunctor *f) {
-        functor_ = f;
+    void setFunctor(ITaskFunctor* f) {
+        functor_.reset(f);
         functorBeginBarrier_.open();
     }
     /*! \brief
@@ -251,11 +255,11 @@ private:
      * in-between steps.
      */
     void init() {
-        functor_ = nullptr;
+        functor_.reset(nullptr);
         functorBeginBarrier_.close();
         functorEndBarrier_.close(this->getNumThreads());
     }
-    ITaskFunctor *functor_;      //!< The function/loop to execute
+    std::unique_ptr<ITaskFunctor> functor_;      //!< The function/loop to execute
     MOBarrier functorBeginBarrier_; //!< Many-to-one barrier to sync threads at beginning of loop
     OMBarrier functorEndBarrier_; //!< One-to-many barrier to sync threads at end of loop
 };
@@ -267,6 +271,8 @@ public:
     /*! \brief
      * Set the functor (work) to be done.
      *
+     * Note: Takes ownership of passed functor
+     *
      * Unlike LoopTask, an atomic counter is incremented when a new function is
      * assigned. More than a simple barrier is necessary to support multiple
      * functor assignments within a single step.
@@ -277,9 +283,9 @@ public:
      *
      * \param[in] f Task functor
      */
-    void setFunctor(ITaskFunctor *f) {
+    void setFunctor(ITaskFunctor* f) {
         functorEndBarrier_.close(this->getNumThreads());
-        functor_ = f;
+        functor_.reset(f);
         functorCounter_++;
     }
     /*! \brief
@@ -330,11 +336,11 @@ private:
      */
     void init() {
         functorCounter_ = 0;
-        functor_ = nullptr;
+        functor_.reset(nullptr);
         functorEndBarrier_.close(this->getNumThreads());
         threadCounters_.assign(this->getNumThreads(),0);
     }
-    ITaskFunctor *functor_;      //!< The function/loop to execute
+    std::unique_ptr<ITaskFunctor> functor_;      //!< The function/loop to execute
     OMBarrier functorEndBarrier_; //!< One-to-many barrier to sync threads at end of loop
     std::atomic<int> functorCounter_;
     std::vector<int> threadCounters_;
@@ -343,8 +349,21 @@ private:
 class BasicTask : public Task {
 public:
     BasicTask() : Task(), functor_(nullptr), containedMultiLoopTask_(nullptr) {}
-    void setFunctor(ITaskFunctor *f) {
-        functor_ = f;
+    /*! \brief
+     * Set the functor (work) to be done.
+     *
+     * Note: Takes ownership of passed functor
+     *
+     * This releases a barrier so that thread who has or will call run can
+     * proceed.
+     *
+     * This function is not thread safe and is intended to be called only by
+     * thread 0 (basic tasks cannot be nested in other tasks).
+     *
+     * \param[in] f Task functor
+     */
+    void setFunctor(ITaskFunctor* f) {
+        functor_.reset(f);
         functorBeginBarrier_.open();
     }
     /*! \brief
@@ -393,11 +412,11 @@ private:
      * in-between steps.
      */
     void init() {
-        functor_ = nullptr;
+        functor_.reset(nullptr);
         functorBeginBarrier_.close();
         functorEndBarrier_.close(this->getNumThreads());
     }
-    ITaskFunctor *functor_;      //!< The function/loop to execute
+    std::unique_ptr<ITaskFunctor> functor_;      //!< The function/loop to execute
     MOBarrier functorBeginBarrier_; //!< Many-to-one barrier to sync threads at beginning of loop
     OMBarrier functorEndBarrier_; //!< One-to-many barrier to sync threads at end of loop
     MultiLoopTask* containedMultiLoopTask_;

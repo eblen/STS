@@ -289,8 +289,7 @@ public:
         assert(task != nullptr);
         task->setReduction(red);
         task->setFunctor(new LoopTaskFunctor<F>(body, {start, end}));
-        int tid = Thread::getId();
-        SubTask* subtask = advanceToNextSubTask(tid);
+        SubTask* subtask = advanceToNextSubTask();
         bool isMyNextTask = (subtask != nullptr) && (subtask->getTask() == task);
         // Calling thread should either be assigned to this loop as its next task, or it should be a dummy loop.
         // Allowing the latter gives the main thread the ability to skip a single task and all of its nested loops.
@@ -301,7 +300,7 @@ public:
             if (red != nullptr) {
                 red->reduce();
             }
-            goBackToPreviousSubTask(tid);
+            goBackToPreviousSubTask();
         }
         // User does not need to call wait for default scheduling
         if (bUseDefaultSchedule_) {
@@ -376,10 +375,14 @@ public:
      * Returns the next subtask for the given thread and updates internal
      * next subtask pointer.
      *
+     * This function only accesses data specific to the calling thread, and
+     * thus is thread-safe if called during a step.
+     *
      * \param[in] threadId   Thread Id
      * \returns pointer to thread's next subtask
      */
-    SubTask* advanceToNextSubTask(int threadId) {
+    SubTask* advanceToNextSubTask() {
+        int threadId = Thread::getId();
         int &st = nextSubTask_[threadId];
         for (; st < getNumSubTasks(threadId); st++) {
             if (!threadSubTasks_[threadId][st]->isDone()) {
@@ -392,12 +395,16 @@ public:
     /*! \brief
      * Go back to the last unfinished subtask for the given thread.
      *
+     * This function only accesses data specific to the calling thread, and
+     * thus is thread-safe if called during a step.
+     *
      * This function is useful when basic tasks need to run internal loops and
      * then resume. It is purely for bookkeeping, and so no value is returned.
      *
      * \param[in] threadId Thread Id
      */
-    void goBackToPreviousSubTask(int threadId) {
+    void goBackToPreviousSubTask() {
+        int threadId = Thread::getId();
         int &st = nextSubTask_[threadId];
         // Always go back at least once, regardless of finished status.
         // Multiloops, for example, may not be finished when this function is

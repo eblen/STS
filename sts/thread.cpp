@@ -18,12 +18,12 @@ void Thread::processQueue() {
     // STS schedule should never change while processing queue
     STS* sts = STS::getCurrentInstance();
     std::string startScheduleName = sts->id;
-    SubTask* subtask = sts->advanceToNextSubTask(id_);
+    SubTask* subtask = sts->advanceToNextSubTask();
     while(subtask != nullptr) {
         STS* sts = STS::getCurrentInstance();
         assert(sts->id == startScheduleName);
         if (subtask->run()) {
-            subtask = sts->advanceToNextSubTask(id_);
+            subtask = sts->advanceToNextSubTask();
         }
     }
     assert(STS::getCurrentInstance()->id == startScheduleName);

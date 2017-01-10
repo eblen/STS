@@ -589,7 +589,6 @@ private:
         isActive_ = true;
         for (Task* task: tasks_) {
             task->restart();
-            task->clear();
         }
         nextSubTask_.assign(getNumThreads(), 0);
 

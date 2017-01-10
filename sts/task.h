@@ -147,10 +147,16 @@ public:
         }
         return (*id).first;
     }
+    /*! \brief
+     * Restart the task. Must be called on each task prior to starting work,
+     * normally called for all tasks in an STS schedule at the beginning of
+     * each step.
+     */
     void restart() {
         for (SubTask* st : subtasks_) {
             st->setDone(false);
         }
+        init();
     }
     //! \brief Get reduction function
     void* getReduction() const {
@@ -173,12 +179,16 @@ public:
     virtual bool  run(Range<Ratio>) = 0;
     //! \brief Wait for the functor to complete
     virtual void  wait() = 0;
-    //! \brief Reset the task for new work
-    virtual void  clear() = 0;
     virtual ~Task() {}
 protected:
     void* reduction_;
 private:
+    /*! \brief
+     * Initialize the task. This function is called by "restart" and should do
+     * all necessary steps to ready the task for doing work (initializing
+     * barriers, counters, variables, etc.).
+     */
+    virtual void  init() = 0;
     //! All subtasks of this task. One for each section of a loop. One for a basic task.
     std::vector<SubTask*> subtasks_; //!< Subtasks to be executed by a single thread
     int numThreads_;
@@ -234,17 +244,17 @@ public:
     void wait() {
         functorEndBarrier_.wait();
     }
+private:
     /*! \brief
      * Reset this object for running a new functor. Nullifies any stored
      * functors and resets barriers. Intended only to be called by thread 0
      * in-between steps.
      */
-    void clear() {
+    void init() {
         functor_ = nullptr;
         functorBeginBarrier_.close();
         functorEndBarrier_.close(this->getNumThreads());
     }
-private:
     ITaskFunctor *functor_;      //!< The function/loop to execute
     MOBarrier functorBeginBarrier_; //!< Many-to-one barrier to sync threads at beginning of loop
     OMBarrier functorEndBarrier_; //!< One-to-many barrier to sync threads at end of loop
@@ -312,18 +322,18 @@ public:
     void wait() {
         functorEndBarrier_.wait();
     }
+private:
     /*! \brief
      * Reset this object for running a new set of functors. Nullifies any
      * stored functors and resets counters and end barrier. Intended only to
      * be called by thread 0 in-between steps.
      */
-    void clear() {
+    void init() {
         functorCounter_ = 0;
         functor_ = nullptr;
         functorEndBarrier_.close(this->getNumThreads());
         threadCounters_.assign(this->getNumThreads(),0);
     }
-private:
     ITaskFunctor *functor_;      //!< The function/loop to execute
     OMBarrier functorEndBarrier_; //!< One-to-many barrier to sync threads at end of loop
     std::atomic<int> functorCounter_;
@@ -376,17 +386,17 @@ public:
     void wait() {
         functorEndBarrier_.wait();
     }
+private:
     /*! \brief
      * Reset this object for running a new functor. Nullifies any stored
      * functors and resets barriers. Intended only to be called by thread 0
      * in-between steps.
      */
-    void clear() {
+    void init() {
         functor_ = nullptr;
         functorBeginBarrier_.close();
         functorEndBarrier_.close(this->getNumThreads());
     }
-private:
     ITaskFunctor *functor_;      //!< The function/loop to execute
     MOBarrier functorBeginBarrier_; //!< Many-to-one barrier to sync threads at beginning of loop
     OMBarrier functorEndBarrier_; //!< One-to-many barrier to sync threads at end of loop

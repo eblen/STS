@@ -1,26 +1,32 @@
+/*
+ * STS example code 3
+ * This example shows use of task reduction.
+ */
 #include <cmath>
-
-#include "sts/barrier.h"
 #include "sts/sts.h"
 
-const int nsteps = 10;
+const int nsteps = 2;
 const int nthreads = 10;
-const int size = 100;
-float A[size] = {0};
-float B[size] = {0};
+const int size = 10;
+int result = 0;
 
 STS *sts;
 
 void do_something_A(int i) {
-    static MMBarrier b(nthreads);
-    A[i] = 1;
-    int j = (i + size / nthreads) % size;
-    b.enter();
-    B[i] += A[i] + A[j];
+    // Inside loop, threads call collect to contribute their individual values
+    // Multiple calls to collect are summed together.
+    sts->collect(1);
 }
 
 void task_f() {
-    sts->parallel_for("TASK_F_0", 0, size, [=](size_t i) {do_something_A(i);});
+    // Create a task reduction instance with the relevant loop task name and an
+    // initial value.
+    TaskReduction<int> tr = sts->createTaskReduction("TASK_F_0", 0);
+    // Pass the task reduction as an additional argument to parallel_for
+    sts->parallel_for("TASK_F_0", 0, size, [=](size_t i) {do_something_A(i);}, &tr);
+    // Reduction occurs automatically at end of parallel_for, and the result is
+    // stored in the reduction instance.
+    result += tr.getResult();
 }
 
 int main(int argc, char **argv)
@@ -36,6 +42,6 @@ int main(int argc, char **argv)
       sts->wait();
   }
   STS::shutdown();
-  int num_samples = 4;
-  for (int i=0; i<num_samples; i++) printf("%f\n", B[i*(size/num_samples)]);
+  printf("Final result: %d\n", result);
+  exit(0);
 }

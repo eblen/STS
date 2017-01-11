@@ -1,9 +1,9 @@
+/*
+ * STS example code 4
+ * This example shows how to use multiple STS instances.
+ */
 #include <cmath>
 #include "sts/sts.h"
-
-/*
- * Example of using two STS instances
- */
 
 const int niters = 10000000;
 float A[niters];
@@ -70,6 +70,9 @@ int main(int argc, char **argv)
 
   STS::startup(nthreads);
 
+  // Multiple instances allow creating different schedules for different
+  // portions of a large codebase. Using multiple schedules is simple because
+  // schedules are not allowed to overlap or be nested.
   STS *sts1 = new STS("sched1");
   for (int step=0; step<nsteps; step++)
   {

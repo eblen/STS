@@ -147,7 +147,7 @@ public:
         if (id == threadTaskIds_.end()) {
             return -1;
         }
-        return (*id).first;
+        return (*id).second;
     }
     /*! \brief
      * Restart the task. Must be called on each task prior to starting work,

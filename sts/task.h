@@ -231,14 +231,14 @@ public:
      *
      * \param[in] f Task functor
      */
-    void setFunctor(ITaskFunctor* f) {
+    void setFunctor(ITaskFunctor* f) override {
         functor_.reset(f);
         functorBeginBarrier_.open();
     }
     /*! \brief
      * Return whether task is ready to run
      */
-    bool isReady() const {
+    bool isReady() const override {
         return functorBeginBarrier_.isOpen();
     }
     /*! \brief
@@ -252,7 +252,7 @@ public:
      * \return whether all functors have been assigned for this task, which
      *         is always true for a LoopTask after running its single task.
      */
-    bool run(Range<Ratio> range) {
+    bool run(Range<Ratio> range) override {
         functorBeginBarrier_.wait();
         functor_->run(range);
         functorEndBarrier_.markArrival();
@@ -264,7 +264,7 @@ public:
      * Normally called by main thread but can be called by any thread to
      * wait for task to complete. Is thread-safe.
      */
-    void wait() {
+    void wait() override {
         functorEndBarrier_.wait();
     }
 private:
@@ -273,7 +273,7 @@ private:
      * functors and resets barriers. Intended only to be called by thread 0
      * in-between steps.
      */
-    void init() {
+    void init() override {
         functor_.reset(nullptr);
         functorBeginBarrier_.close();
         functorEndBarrier_.close(this->getNumThreads());
@@ -302,7 +302,7 @@ public:
      *
      * \param[in] f Task functor
      */
-    void setFunctor(ITaskFunctor* f) {
+    void setFunctor(ITaskFunctor* f) override {
         functorEndBarrier_.close(this->getNumThreads());
         functor_.reset(f);
         functorCounter_++;
@@ -310,7 +310,7 @@ public:
     /*! \brief
      * Return whether task is ready to run
      */
-    bool isReady() const {
+    bool isReady() const override {
         int localThreadId = this->getThreadId(Thread::getId());
         return functorCounter_.load() != threadCounters_[localThreadId];
     }
@@ -335,7 +335,7 @@ public:
      * \return whether all functors have been assigned for this task. If
      *         not, thread should call run again.
      */
-    bool run(Range<Ratio> range) {
+    bool run(Range<Ratio> range) override {
         int localThreadId = this->getThreadId(Thread::getId());
         wait_until_not(functorCounter_, threadCounters_[localThreadId]++);
         if (functorCounter_ == -1) {
@@ -351,7 +351,7 @@ public:
      * Normally called by main thread but can be called by any thread to
      * wait for task to complete. Is thread-safe.
      */
-    void wait() {
+    void wait() override {
         functorEndBarrier_.wait();
     }
 private:
@@ -360,7 +360,7 @@ private:
      * stored functors and resets counters and end barrier. Intended only to
      * be called by thread 0 in-between steps.
      */
-    void init() {
+    void init() override {
         functorCounter_ = 0;
         functor_.reset(nullptr);
         functorEndBarrier_.close(this->getNumThreads());
@@ -388,14 +388,14 @@ public:
      *
      * \param[in] f Task functor
      */
-    void setFunctor(ITaskFunctor* f) {
+    void setFunctor(ITaskFunctor* f) override {
         functor_.reset(f);
         functorBeginBarrier_.open();
     }
     /*! \brief
      * Return whether task is ready to run
      */
-    bool isReady() const {
+    bool isReady() const override {
         return functorBeginBarrier_.isOpen();
     }
     /*! \brief
@@ -408,7 +408,7 @@ public:
      * \return whether all functors have been assigned for this task, which
      *         is always true for a BasicTask after running its single task.
      */
-    bool run(Range<Ratio> range) {
+    bool run(Range<Ratio> range) override {
         functorBeginBarrier_.wait();
         functor_->run(range);
         functorEndBarrier_.markArrival();
@@ -434,7 +434,7 @@ public:
      * Normally called by main thread but can be called by any thread to
      * wait for task to complete. Is thread-safe.
      */
-    void wait() {
+    void wait() override {
         functorEndBarrier_.wait();
     }
 private:
@@ -443,7 +443,7 @@ private:
      * functors and resets barriers. Intended only to be called by thread 0
      * in-between steps.
      */
-    void init() {
+    void init() override {
         functor_.reset(nullptr);
         functorBeginBarrier_.close();
         functorEndBarrier_.close(this->getNumThreads());

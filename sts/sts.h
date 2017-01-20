@@ -9,6 +9,8 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <typeindex>
+#include <typeinfo>
 #include <utility>
 #include <vector>
 
@@ -166,8 +168,12 @@ public:
         // Link the basic task with its loop task
         int parentId = getTaskId(label);
         int childId  = getTaskId(loopTaskLabel);
-        BasicTask*     parentTask = dynamic_cast<BasicTask*>(tasks_[parentId].get());
-        MultiLoopTask* childTask  = dynamic_cast<MultiLoopTask*>(tasks_[childId].get());
+        Task* pTask = tasks_[parentId].get();
+        Task* cTask = tasks_[childId].get();
+        assert(std::type_index(typeid(*pTask))==std::type_index(typeid(BasicTask)));
+        assert(std::type_index(typeid(*cTask))==std::type_index(typeid(MultiLoopTask)));
+        BasicTask*     parentTask = static_cast<BasicTask*>(pTask);
+        MultiLoopTask* childTask  = static_cast<MultiLoopTask*>(cTask);
         parentTask->setMultiLoop(childTask);
     }
     /*! \brief
@@ -303,6 +309,8 @@ public:
         }
         Task* task = tasks_[taskId].get();
         assert(task != nullptr);
+        // Must be a loop task
+        assert(std::type_index(typeid(*task))!=std::type_index(typeid(BasicTask)));
         task->setReduction(red);
         task->setFunctor(new LoopTaskFunctor<F>(body, {start, end}));
         SubTask* subtask = advanceToNextSubTask();
@@ -588,13 +596,13 @@ private:
             assert(v==tasks_.size());
             switch (ttype) {
             case TaskType::BASIC:
-                tasks_.push_back(std::unique_ptr<Task>(new BasicTask()));
+                tasks_.emplace_back(std::unique_ptr<Task>(new BasicTask()));
                 break;
             case TaskType::LOOP:
-                tasks_.push_back(std::unique_ptr<Task>(new LoopTask()));
+                tasks_.emplace_back(std::unique_ptr<Task>(new LoopTask()));
                 break;
             case TaskType::MULTILOOP:
-                tasks_.push_back(std::unique_ptr<Task>(new MultiLoopTask()));
+                tasks_.emplace_back(std::unique_ptr<Task>(new MultiLoopTask()));
                 break;
             }
             taskLabels_[label] = v;
@@ -609,6 +617,8 @@ private:
     template<typename T>
     void collect(T a, int ttid) {
         const Task* t = getCurrentTask();
+        // Must be a loop task
+        assert(std::type_index(typeid(*t))!=std::type_index(typeid(const BasicTask)));
         // TODO: How to handle these user errors - calling collect outside of a
         // task or for a task without a reduction?
         if (t == nullptr) {

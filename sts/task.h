@@ -81,7 +81,7 @@ public:
      * \param[in] range    Out of a possible range from 0 to 1, the section in
                            this part. Ignored for basic tasks.
      */
-    SubTask(Task *task, Range<Ratio> range) : task_(task), range_(range),
+    SubTask(Task *task, Range<Ratio> range) :range_(range), task_(task),
     isDone_(false) {}
     /*! \brief
      * Run the subtask
@@ -113,7 +113,7 @@ private:
 class Task {
 public:
     enum Priority {NORMAL, HIGH};
-    Task() :numThreads_(0), reduction_(nullptr), priority_(NORMAL) {}
+    Task() :reduction_(nullptr), numThreads_(0), priority_(NORMAL) {}
     /*! \brief
      * Add a new subtask for this task
      *

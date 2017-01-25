@@ -40,7 +40,11 @@ public:
      */
     static void startup(size_t numThreads) {
         assert(numThreads > 0);
-        assert(threads_.size() == 0); // Do not allow multiple calls
+        if (threads_.size() > 0) {
+            // Ignore multiple calls but check that thread count is the same
+            assert(numThreads == threads_.size());
+            return;
+        }
 
         // Barrier must be initialized before creating threads
         // First time the barrier is used, each non-main thread enters it twice

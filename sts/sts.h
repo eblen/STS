@@ -64,7 +64,7 @@ public:
         assert(instance_ == defaultInstance_);
         //-1 notifies threads to finish
         stepCounter_.store(-1, std::memory_order_release);
-        for (unsigned int i=1;i<getNumThreads();i++) {
+        for (int i=1;i<getNumThreads();i++) {
             threads_[i].join();
         }
         delete defaultInstance_;

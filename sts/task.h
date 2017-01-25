@@ -162,6 +162,16 @@ public:
         }
         init();
     }
+    /*! \brief
+     * Restart the task. Must be called on each task prior to starting work,
+     * normally called for all tasks in an STS schedule at the beginning of
+     * each step.
+     */
+    void markDone() {
+        for (std::unique_ptr<SubTask> &st : subtasks_) {
+            st->setDone(true);
+        }
+    }
     //! \brief Get task priority
     Priority getPriority() const {
         return priority_;

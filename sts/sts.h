@@ -8,6 +8,7 @@
 #include <iostream>
 #include <map>
 #include <memory>
+#include <stack>
 #include <string>
 #include <typeindex>
 #include <typeinfo>
@@ -77,10 +78,10 @@ public:
         int n = getNumThreads();
         assert(n > 0);
         threadSubTasks_.resize(n);
+        threadCallStacks_.resize(n);
         if (!id.empty()) {
             stsInstances_[id] = this;
         }
-        nextSubTask_.resize(n, 0);
     }
     ~STS() {
         for (auto& taskList : threadSubTasks_) {
@@ -313,18 +314,9 @@ public:
         assert(std::type_index(typeid(*task))!=std::type_index(typeid(BasicTask)));
         task->setReduction(red);
         task->setFunctor(new LoopTaskFunctor<F>(body, {start, end}));
-        SubTask* subtask = advanceToNextSubTask();
-        bool isMyNextTask = (subtask != nullptr) && (subtask->getTask() == task);
-        // Calling thread should either be assigned to this loop as its next task, or it should be a dummy loop.
-        // Allowing the latter gives the main thread the ability to skip a single task and all of its nested loops.
-        assert((start == end) || (isMyNextTask && !subtask->isDone()));
-        if (isMyNextTask) {
-            subtask->run();
-            task->wait();
-            if (red != nullptr) {
-                red->reduce();
-            }
-            goBackToPreviousSubTask();
+        runNestedLoop(task);
+        if (red != nullptr) {
+            red->reduce();
         }
         // User does not need to call wait for default scheduling
         if (bUseDefaultSchedule_) {
@@ -332,25 +324,19 @@ public:
         }
     }
     /*! \brief
-     * Skip the given run task.
+     * Skip the given task.
      *
      * This is useful when an assigned task should not run under certain conditions.
      *
      * \param[in] label  task label
      */
-    void skip_run(std::string label) {
-        run(label, []{});
-    }
-    /*! \brief
-     * Skip the given loop task.
-     *
-     * This is useful when an assigned task should not run under certain conditions.
-     *
-     * \param[in] label  task label
-     */
-    void skip_loop(std::string label) {
-        // Return i to avoid compiler warnings about an unused parameter
-        parallel_for(label, 0, 0, [](int i){return i;});
+    void skipTask(std::string label) {
+        if (isTaskAssigned(label)) {
+            int taskId = getTaskId(label);
+            Task* task = tasks_[taskId].get();
+            assert(task != nullptr);
+            task->markDone();
+        }
     }
     //! Automatically compute new schedule based on previous step timing
     void reschedule() {
@@ -394,61 +380,6 @@ public:
      */
     static STS *getCurrentInstance() {
         return instance_;
-    }
-    /*! \brief
-     * Returns the next subtask for the given thread and updates internal
-     * next subtask pointer.
-     *
-     * This function only accesses data specific to the calling thread, and
-     * thus is thread-safe if called during a step.
-     *
-     * \param[in] threadId   Thread Id
-     * \returns pointer to thread's next subtask
-     */
-    SubTask* advanceToNextSubTask() {
-        int threadId = Thread::getId();
-        int &st = nextSubTask_[threadId];
-        for (; st < getNumSubTasks(threadId); st++) {
-            if (!threadSubTasks_[threadId][st]->isDone()) {
-                // return this subtask but increment pointer to next subtask
-                return threadSubTasks_[threadId][st++];
-            }
-        }
-        return nullptr;
-    }
-    /*! \brief
-     * Go back to the last unfinished subtask for the given thread.
-     *
-     * This function only accesses data specific to the calling thread, and
-     * thus is thread-safe if called during a step.
-     *
-     * This function is useful when basic tasks need to run internal loops and
-     * then resume. It is purely for bookkeeping, and so no value is returned.
-     *
-     * \param[in] threadId Thread Id
-     */
-    void goBackToPreviousSubTask(int taskId = -1) {
-        int threadId = Thread::getId();
-        int &st = nextSubTask_[threadId];
-        if (taskId > -1) {
-            assert(taskId < getNumSubTasks(threadId));
-            st = taskId+1;
-            return;
-        }
-        // Always go back at least once, regardless of finished status.
-        // Multiloops, for example, may not be finished when this function is
-        // called, but we still want to go back to the containing subtask.
-        st -= 2;
-        assert(st >= 0);
-        for (; st >= 0; st--) {
-            if (!threadSubTasks_[threadId][st]->isDone()) {
-                // Index (st) is of the *next* subtask, not the current subtask
-                st++;
-                return;
-            }
-        }
-        // Means an attempt to rewind, but no prior tasks are unfinished.
-        assert(false);
     }
     /*! \brief
      * Get number of subtasks assigned to a thread
@@ -534,31 +465,47 @@ public:
     void collect(T a) {
         collect(a, getTaskThreadId());
     }
+    bool runNextSubTask() {
+        int tid = Thread::getId();
+        // Should only be called to start a new call stack
+        assert(threadCallStacks_[tid].empty());
+        for (int stid=0; stid < getNumSubTasks(tid); stid++) {
+            if (!threadSubTasks_[tid][stid]->isDone()) {
+                runSubTask(stid);
+                return true;
+            }
+        }
+        return false;
+    }
     /*! \brief
      * Yield a running task and run the next high priority task
      */
     void yield() {
-        int previousSubTaskId = nextSubTask_[Thread::getId()] - 1;
-        // Could be -1, which would mean a yield call outside of a task
-        assert(previousSubTaskId >= 0);
-        SubTask* st;
-        while ((st = advanceToNextSubTask()) != nullptr) {
-            if (st->getTask()->getPriority() == Task::HIGH && st->isReady()) {
-                st->run();
-                break;
+        int tid = Thread::getId();
+        const std::stack<int>& cstack = threadCallStacks_[Thread::getId()];
+        int stid = 0;
+        if (!cstack.empty()) {
+            stid = cstack.top()+1;
+        }
+        for (; stid < getNumSubTasks(tid); stid++) {
+            SubTask* subtask = threadSubTasks_[tid][stid];
+            // TODO: Decide on the exact policy for what tasks will be considered
+            if (!subtask->isDone() && subtask->getTask()->getPriority() ==
+                    Task::HIGH && subtask->isReady()) {
+                runSubTask(stid);
             }
         }
-        goBackToPreviousSubTask(previousSubTaskId);
     }
-
 private:
-    const Task *getCurrentTask() {
-        int threadId = Thread::getId();
-        int subTaskId = nextSubTask_[threadId]-1;
-        if (subTaskId < 0 || subTaskId >= getNumSubTasks(threadId)) {
+    const Task* getCurrentTask() {
+        int tid = Thread::getId();
+        if (threadCallStacks_[tid].empty()) {
             return nullptr;
         }
-        return threadSubTasks_[threadId][subTaskId]->getTask();
+        else {
+            int stid = threadCallStacks_[tid].top();
+            return threadSubTasks_[tid][stid]->getTask();
+        }
     }
     bool isTaskAssigned(std::string label) const {
         return (taskLabels_.find(label) != taskLabels_.end());
@@ -630,6 +577,50 @@ private:
         }
         tr->collect(a, ttid);
     }
+    /*! \brief
+     * Run the given subtask
+     *
+     * This function handles the low-level operations of running a subtask.
+     * This includes bookkeeping, setting flags, and launching the run.
+     * Callers are responsible for selecting a suitable subtask to run.
+     *
+     * \param[in] stid  Id of the subtask to run
+     */
+    void runSubTask(int stid) {
+        int tid = Thread::getId();
+        std::stack<int>& cstack = threadCallStacks_[tid];
+        cstack.push(stid);
+        bool isDone = threadSubTasks_[tid][stid]->run();
+        cstack.pop();
+        threadSubTasks_[tid][stid]->setDone(isDone);
+    }
+    /*! \brief
+     * Run the given loop task inside the currently running task.
+     *
+     * The caller is the main thread for the loop, not a helper, and thus the
+     * task must be the next unfinished task on the caller's queue. Also, the
+     * caller waits on the task to finish at the end of the loop.
+     *
+     * \param[in] task  The loop task to be executed.
+     */
+    void runNestedLoop(Task* task) {
+        int tid = Thread::getId();
+        const std::stack<int>& cstack = threadCallStacks_[Thread::getId()];
+        int stid = 0;
+        if (!cstack.empty()) {
+            stid = cstack.top()+1;
+        }
+        for (; stid < getNumSubTasks(tid); stid++) {
+            SubTask* subtask = threadSubTasks_[tid][stid];
+            if (!subtask->isDone()) {
+                // Loop task must be the thread's next unfinished task
+                assert(subtask->getTask() == task);
+                runSubTask(stid);
+                task->wait();
+                return;
+            }
+        }
+    }
     //! Notify threads to start computing the next step
     void nextStepInternal() {
         assert(Thread::getId()==0);
@@ -646,7 +637,6 @@ private:
         for (std::unique_ptr<Task> &task: tasks_) {
             task->restart();
         }
-        nextSubTask_.assign(getNumThreads(), 0);
 
         // Increment counter only
         stepCounter_.fetch_add(1, std::memory_order_release);
@@ -677,7 +667,8 @@ private:
     std::vector<std::unique_ptr<Task>>  tasks_;
     std::map<std::string,int> taskLabels_;
     std::vector< std::vector<SubTask *> > threadSubTasks_;
-    std::vector<int> nextSubTask_; // Index of next subtask for each thread
+    // Call stack of running subtasks for each thread
+    std::vector<std::stack<int>> threadCallStacks_;
     bool bUseDefaultSchedule_;
     // "Active" means schedule is between nextStep and wait calls.
     bool isActive_;

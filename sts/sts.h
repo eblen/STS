@@ -88,11 +88,7 @@ public:
         }
     }
     ~STS() {
-        for (auto& taskList : threadSubTasks_) {
-            for (SubTask *t : taskList) {
-                delete t;
-            }
-        }
+        // Tasks own their subtasks, so do not delete SubTasks in threadSubTasks_
         if (!id.empty()) {
             stsInstances_.erase(id);
         }

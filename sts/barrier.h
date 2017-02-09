@@ -80,7 +80,7 @@ public:
      */
     void close() {isLocked.store(true);}
 private:
-    std::atomic_bool isLocked;
+    std::atomic<bool> isLocked;
 };
 
 /*! \internal \brief
@@ -109,7 +109,7 @@ public:
     }
 
 private:
-    std::atomic_int numThreadsRemaining;
+    std::atomic<int> numThreadsRemaining;
 };
 
 /*! \internal \brief

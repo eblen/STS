@@ -261,7 +261,7 @@ public:
         if (!isTaskAssigned(label) || bUseDefaultSchedule_) {
             function();
         } else {
-            tasks_[getTaskId(label)]->setFunctor(new BasicTaskFunctor<F>(function));
+            tasks_[getTaskId(label)]->setFunctor(createBasicTaskFunctor(function));
         }
     }
     //! Notify threads to start computing the next step
@@ -313,7 +313,7 @@ public:
         // Must be a loop task
         assert(std::type_index(typeid(*task))!=std::type_index(typeid(BasicTask)));
         task->setReduction(red);
-        task->setFunctor(new LoopTaskFunctor<F>(body, {start, end}));
+        task->setFunctor(createLoopTaskFunctor(body, {start, end}));
         runNestedLoop(task);
         if (red != nullptr) {
             red->reduce();
@@ -323,19 +323,37 @@ public:
             waitInternal();
         }
     }
+    // TODO: Skipping is not efficient. Assigning an empty functor does not skip
+    // the overhead of running the function, such as handling barriers.
     /*! \brief
-     * Skip the given task.
+     * Skip the given run task.
      *
      * This is useful when an assigned task should not run under certain conditions.
      *
      * \param[in] label  task label
      */
-    void skipTask(std::string label) {
+    void skipRun(std::string label) {
         if (isTaskAssigned(label)) {
             int taskId = getTaskId(label);
             Task* task = tasks_[taskId].get();
             assert(task != nullptr);
-            task->markDone();
+            task->setFunctor(createBasicTaskFunctor( []{} ));
+        }
+    }
+    /*! \brief
+     * Skip the given loop task.
+     *
+     * This is useful when an assigned task should not run under certain conditions.
+     *
+     * \param[in] label  task label
+     */
+    void skipLoop(std::string label) {
+        if (isTaskAssigned(label)) {
+            int taskId = getTaskId(label);
+            Task* task = tasks_[taskId].get();
+            assert(task != nullptr);
+            // Return i to avoid compiler warnings about an unused parameter
+            task->setFunctor(createLoopTaskFunctor( [](int i){return i;}, {0,1} ));
         }
     }
     //! Automatically compute new schedule based on previous step timing
@@ -613,13 +631,27 @@ private:
         for (; stid < getNumSubTasks(tid); stid++) {
             SubTask* subtask = threadSubTasks_[tid][stid];
             if (!subtask->isDone()) {
-                // Loop task must be the thread's next unfinished task
-                assert(subtask->getTask() == task);
-                runSubTask(stid);
-                task->wait();
-                return;
+                if (subtask->getTask() == task) {
+                    runSubTask(stid);
+                    task->wait();
+                    return;
+                }
+                else {
+                    // Running intermediate tasks enforces that tasks run in
+                    // order of assignment.
+                    // Most likely, this will be a skipped task (empty functor).
+                    // TODO: Enforce that it is a skipped task, because
+                    // otherwise there is probably an error or a really bad
+                    // schedule. Alternatively, redesign code so that unfinished
+                    // skip tasks are never encountered. Then this case is just
+                    // an assert(false)
+                    assert(subtask->getTask()->isReady());
+                    runSubTask(stid);
+                }
             }
         }
+        // Task was not found
+        assert(false);
     }
     //! Notify threads to start computing the next step
     void nextStepInternal() {

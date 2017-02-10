@@ -26,7 +26,7 @@ public:
 };
 
 //! \internal Loop task functor
-template<class F>
+template<typename F>
 class LoopTaskFunctor : public ITaskFunctor {
 public:
     /*! \brief
@@ -47,6 +47,12 @@ private:
     Range<int64_t> range_;
 };
 
+//! \internal Allows creating a loop functor without knowing the function type
+template<typename F>
+LoopTaskFunctor<F>* createLoopTaskFunctor(F f, Range<int64_t> r) {
+    return new LoopTaskFunctor<F>(f,r);
+}
+
 //! \internal Basic (non-loop) task functor
 template<class F>
 class BasicTaskFunctor : public ITaskFunctor {
@@ -63,6 +69,13 @@ public:
 private:
     F func_;
 };
+
+//! \internal Allows creating a basic functor without knowing the function type
+template<typename F>
+BasicTaskFunctor<F>* createBasicTaskFunctor(F f) {
+    return new BasicTaskFunctor<F>(f);
+}
+
 
 class Task;
 

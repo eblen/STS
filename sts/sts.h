@@ -194,10 +194,13 @@ public:
      * \param[in] label     Label of the task
      * \param[in] threadIds Id of threads assigned the work
      */
-    void assign_loop(std::string label, const std::vector<int> &threadIds) {
+    void assign_loop(std::string label, const std::vector<int> &threadIds, const Range<Ratio> range = {0,1}) {
         int nthreads = threadIds.size();
+        Ratio r = range.start;
+        Ratio interval = (range.end - range.start) * Ratio(1,nthreads);
         for (int i=0; i<nthreads; i++) {
-            assign_loop(label, threadIds[i], {{i, nthreads},{i+1, nthreads}});
+            assign_loop(label, threadIds[i], {r,r+interval});
+            r += interval;
         }
     }
     void setNormalPriority(std::string label) {

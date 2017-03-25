@@ -1,13 +1,36 @@
 #ifndef STS_RANGE_H
 #define STS_RANGE_H
 
+#include <cassert>
+#include <string>
+
+// TODO: Support negative ratios in all operations
 class Ratio {
 public:
     Ratio(int n, int d=1) : nom_(n), denom_(d) {} ;
-    operator int() { return nom_/denom_; } 
+    operator int() { return nom_/denom_; }
+    Ratio reduce() {
+        int gcd = Ratio::gcd(nom_, denom_);
+        nom_ /= gcd;
+        denom_ /= gcd;
+        return *this;
+    }
+    std::string toString() const {
+        return std::to_string(nom_) + "/" + std::to_string(denom_);
+    }
+    static int gcd(int a, int b) {
+        assert(a >= 0 && b >= 0);
+        if (a == 0) return b;
+        if (b == 0) return a;
+        return gcd(b,a%b);
+    }
 private:
     int nom_, denom_;
     friend Ratio operator*(Ratio, int);
+    friend Ratio operator*(Ratio, Ratio);
+    friend Ratio operator+(Ratio, Ratio);
+    friend Ratio operator+=(Ratio &, Ratio);
+    friend Ratio operator-(Ratio, Ratio);
 };
 
 template<class T>

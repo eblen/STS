@@ -511,6 +511,7 @@ public:
             if (!subtask->isDone() && subtask->getTask()->getPriority() ==
                     Task::HIGH && subtask->isReady()) {
                 runSubTask(stid);
+                return;
             }
         }
     }

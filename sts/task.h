@@ -152,6 +152,10 @@ public:
     int getNumThreads() const {
         return numThreads_;
     }
+    //! \brief Get total number of subtasks for this task
+    int getNumSubtasks() const {
+        return subtasks_.size();
+    }
     /*! \brief
      * Get task-specific thread Id for the given STS thread Id
      *
@@ -299,7 +303,7 @@ private:
     void init() override {
         functor_.reset(nullptr);
         functorBeginBarrier_.close();
-        functorEndBarrier_.close(this->getNumThreads());
+        functorEndBarrier_.close(this->getNumSubtasks());
     }
     std::unique_ptr<ITaskFunctor> functor_;      //!< The function/loop to execute
     MOBarrier functorBeginBarrier_; //!< Many-to-one barrier to sync threads at beginning of loop
@@ -386,7 +390,7 @@ private:
     void init() override {
         functorCounter_ = 0;
         functor_.reset(nullptr);
-        functorEndBarrier_.close(this->getNumThreads());
+        functorEndBarrier_.close(this->getNumSubtasks());
         threadCounters_.assign(this->getNumThreads(),0);
     }
     std::unique_ptr<ITaskFunctor> functor_;      //!< The function/loop to execute
@@ -469,7 +473,7 @@ private:
     void init() override {
         functor_.reset(nullptr);
         functorBeginBarrier_.close();
-        functorEndBarrier_.close(this->getNumThreads());
+        functorEndBarrier_.close(this->getNumSubtasks());
     }
     std::unique_ptr<ITaskFunctor> functor_;      //!< The function/loop to execute
     MOBarrier functorBeginBarrier_; //!< Many-to-one barrier to sync threads at beginning of loop

@@ -125,7 +125,7 @@ public:
     void assign(std::string label, TaskType ttype, int threadId, Range<Ratio> range) {
         int id = setTask(label, ttype);
         assert(range.start>=0 && range.end<=1);
-        SubTask* t = new SubTask(tasks_[id].get(), range);
+        SubTask* t = new SubTask(threadId, tasks_[id].get(), range);
         threadSubTasks_[threadId].push_back(t);
         tasks_[id]->pushSubtask(threadId, t);
     }
@@ -420,12 +420,17 @@ public:
     int getNumSubTasks(int threadId) const {
         return threadSubTasks_[threadId].size();
     }
+    const Task* getTask(std::string label) const {
+        assert(isTaskAssigned(label));
+        int id = getTaskId(label);
+        return tasks_[id].get();
+    }
     /*! \brief
      * Get number of threads for current task or 0 if no current task
      *
      * \return number of threads or 0 if no current task
      */
-    int getTaskNumThreads() {
+    int getTaskNumThreads() const {
         const Task *t = getCurrentTask();
         if (t == nullptr) {
             return 0;
@@ -438,7 +443,7 @@ public:
      * \param[in] label  task label
      * \return number of threads
      */
-    int getTaskNumThreads(std::string label) {
+    int getTaskNumThreads(std::string label) const {
         assert(isTaskAssigned(label));
         int taskId = getTaskId(label);
         return tasks_[taskId]->getNumThreads();
@@ -448,7 +453,7 @@ public:
      *
      * \return thread task id or -1 if no current task
      */
-    int getTaskThreadId() {
+    int getTaskThreadId() const {
         const Task *t = getCurrentTask();
         if (t == nullptr) {
             return -1;
@@ -509,6 +514,19 @@ public:
         return false;
     }
     /*! \brief
+     * Record the current time inside the currently running subtask.
+     *
+     * Useful for creating time stamps for analysis or for load balancing.
+     * Events such as completing communication, exiting barriers, etc. can be
+     * captured.
+     *
+     * \param[in] label Name for event
+     */
+    void recordTime(std::string label) {
+        SubTask* st = getCurrentSubTask();
+        st->recordTime(label); 
+    }
+    /*! \brief
      * Yield a running task and run the next high priority task
      */
     void yield() {
@@ -543,15 +561,27 @@ public:
            }
        } 
     }
+    const SubTask* getSubTask(int threadId, int subTaskId) const {
+        return threadSubTasks_[threadId][subTaskId];
+    }
 private:
-    const Task* getCurrentTask() {
+    SubTask* getCurrentSubTask() const {
         int tid = Thread::getId();
         if (threadCallStacks_[tid].empty()) {
             return nullptr;
         }
         else {
             int stid = threadCallStacks_[tid].top();
-            return threadSubTasks_[tid][stid]->getTask();
+            return threadSubTasks_[tid][stid];
+        }
+    }
+    const Task* getCurrentTask() const {
+        SubTask* st  = getCurrentSubTask();
+        if (st == nullptr) {
+            return nullptr;
+        }
+        else {
+            return st->getTask();
         }
     }
     bool isTaskAssigned(std::string label) const {
@@ -565,7 +595,7 @@ private:
      * \param[in] task label
      * \return task id
      */
-    int getTaskId(std::string label) {
+    int getTaskId(std::string label) const {
         auto it = taskLabels_.find(label);
         assert(it != taskLabels_.end());
         return it->second;

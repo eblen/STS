@@ -1,7 +1,7 @@
 #include "task.h"
 
 bool SubTask::run() {
-    isDone_ = task_->run(range_);
+    isDone_ = task_->run(range_, timeData_);
     return isDone_;
 }
 const Task* SubTask::getTask() const {

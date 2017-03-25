@@ -11,7 +11,8 @@
 #include "range.h"
 #include "thread.h"
 
-using sts_clock = std::chrono::steady_clock;
+using namespace std::chrono;
+using sts_clock = steady_clock;
 
 //! \internal Interface of the executable function of a task
 class ITaskFunctor {
@@ -76,8 +77,14 @@ BasicTaskFunctor<F>* createBasicTaskFunctor(F f) {
     return new BasicTaskFunctor<F>(f);
 }
 
-
 class Task;
+
+struct TaskTimes {
+    time_point<sts_clock> waitStart;
+    time_point<sts_clock> runStart;
+    time_point<sts_clock> runEnd;
+    std::map< std::string, std::vector<time_point<sts_clock>> > auxTimes;
+};
 
 /*! \internal \brief
  * The portion of a task done by one thread
@@ -90,11 +97,13 @@ public:
     /*! \brief
      * Constructor
      *
+     * \param[in] tid      Id of thread assigned the subtask
      * \param[in] task     The task this is part of.
      * \param[in] range    Out of a possible range from 0 to 1, the section in
                            this part. Ignored for basic tasks.
      */
-    SubTask(Task *task, Range<Ratio> range) :range_(range), task_(task),
+    SubTask(int tid, Task *task, Range<Ratio> range) :threadId_(tid),
+    range_(range), task_(task),
     isDone_(false) {}
     /*! \brief
      * Run the subtask
@@ -104,11 +113,47 @@ public:
     bool isDone() const;
     void setDone(bool isDone);
     bool isReady() const;
-
+    long getWaitStartTime() const {
+        auto s = time_point_cast<microseconds>(timeData_.waitStart);
+        return s.time_since_epoch().count();
+    }
+    long getRunStartTime() const {
+        auto s = time_point_cast<microseconds>(timeData_.runStart);
+        return s.time_since_epoch().count();
+    }
+    long getRunEndTime() const {
+        auto s = time_point_cast<microseconds>(timeData_.runEnd);
+        return s.time_since_epoch().count();
+    }
+    long getWaitDuration() const {
+        return getRunStartTime() - getWaitStartTime();
+    }
+    long getRunDuration() const {
+        return getRunEndTime() - getRunStartTime();
+    }
+    long getTotalDuration() const {
+        return getRunEndTime() - getWaitStartTime();
+    }
+    void recordTime(std::string label) {
+        timeData_.auxTimes[label].push_back(sts_clock::now());
+    }
+    std::vector<long> getAuxTimes(std::string label) const {
+        std::vector<long> times;
+        for (auto t : timeData_.auxTimes.at(label)) {
+            auto s = time_point_cast<microseconds>(t);
+            times.push_back(s.time_since_epoch().count());
+        }
+        return times;
+    }
+    void clearAuxTimes() {
+        timeData_.auxTimes.clear();
+    }
+    const int threadId_;
     const Range<Ratio> range_;     /**< Range (out of [0,1]) of loop part */
 private:
     Task *task_;             /**< Reference to main task */
     bool isDone_;
+    TaskTimes timeData_;
 };
 
 /*! \internal \brief
@@ -176,18 +221,9 @@ public:
     void restart() {
         for (std::unique_ptr<SubTask> &st : subtasks_) {
             st->setDone(false);
+            st->clearAuxTimes();
         }
         init();
-    }
-    /*! \brief
-     * Restart the task. Must be called on each task prior to starting work,
-     * normally called for all tasks in an STS schedule at the beginning of
-     * each step.
-     */
-    void markDone() {
-        for (std::unique_ptr<SubTask> &st : subtasks_) {
-            st->setDone(true);
-        }
     }
     //! \brief Get task label
     std::string getLabel() const {
@@ -216,12 +252,18 @@ public:
     void setReduction(void* r) {
         reduction_ = r;
     }
+    const SubTask* getSubTask(size_t i) const {
+        if (i < subtasks_.size()) {
+            return subtasks_[i].get();
+        }
+        return nullptr;
+    }
     //! \brief Set the functor (work) to be done
     virtual void setFunctor(ITaskFunctor*) = 0;
     //! \brief Return whether task is ready to run
     virtual bool isReady() const = 0;
     //! \brief Run the functor in the specified range
-    virtual bool run(Range<Ratio>) = 0;
+    virtual bool run(Range<Ratio>, TaskTimes &td) = 0;
     //! \brief Wait for the functor to complete
     virtual void wait() = 0;
     virtual ~Task() {}
@@ -284,9 +326,12 @@ public:
      * \return whether all functors have been assigned for this task, which
      *         is always true for a LoopTask after running its single task.
      */
-    bool run(Range<Ratio> range) override {
+    bool run(Range<Ratio> range, TaskTimes &td) override {
+        td.waitStart = sts_clock::now();
         functorBeginBarrier_.wait();
+        td.runStart = sts_clock::now();
         functor_->run(range);
+        td.runEnd = sts_clock::now();
         functorEndBarrier_.markArrival();
         return true;
     }
@@ -367,13 +412,16 @@ public:
      * \return whether all functors have been assigned for this task. If
      *         not, thread should call run again.
      */
-    bool run(Range<Ratio> range) override {
+    bool run(Range<Ratio> range, TaskTimes &td) override {
         int localThreadId = this->getThreadId(Thread::getId());
+        td.waitStart = sts_clock::now();
         wait_until_not(functorCounter_, threadCounters_[localThreadId]++);
         if (functorCounter_ == -1) {
             return true;
         }
+        td.runStart = sts_clock::now();
         functor_->run(range);
+        td.runEnd = sts_clock::now();
         functorEndBarrier_.markArrival();
         return false;
     }
@@ -440,9 +488,12 @@ public:
      * \return whether all functors have been assigned for this task, which
      *         is always true for a BasicTask after running its single task.
      */
-    bool run(Range<Ratio> range) override {
+    bool run(Range<Ratio> range, TaskTimes &td) override {
+        td.waitStart = sts_clock::now();
         functorBeginBarrier_.wait();
+        td.runStart = sts_clock::now();
         functor_->run(range);
+        td.runEnd = sts_clock::now();
         functorEndBarrier_.markArrival();
         if (containedMultiLoopTask_ != nullptr) {
             containedMultiLoopTask_->markFinished();

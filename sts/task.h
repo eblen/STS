@@ -126,7 +126,7 @@ private:
 class Task {
 public:
     enum Priority {NORMAL, HIGH};
-    Task() :reduction_(nullptr), numThreads_(0), priority_(NORMAL) {}
+    Task(std::string l) :reduction_(nullptr), label(l), numThreads_(0), priority_(NORMAL) {}
     /*! \brief
      * Add a new subtask for this task
      *
@@ -189,6 +189,10 @@ public:
             st->setDone(true);
         }
     }
+    //! \brief Get task label
+    std::string getLabel() const {
+        return label;
+    }
     //! \brief Get task priority
     Priority getPriority() const {
         return priority_;
@@ -224,6 +228,7 @@ public:
 protected:
     void*    reduction_;
 private:
+    std::string label;
     /*! \brief
      * Initialize the task. This function is called by "restart" and should do
      * all necessary steps to ready the task for doing work (initializing
@@ -243,7 +248,7 @@ private:
  */
 class LoopTask : public Task {
 public:
-    LoopTask() : Task(), functor_(nullptr) {}
+    LoopTask(std::string label) : Task(label), functor_(nullptr) {}
     /*! \brief
      * Set the functor (work) to be done.
      *
@@ -312,7 +317,7 @@ private:
 
 class MultiLoopTask : public Task {
 public:
-    MultiLoopTask() : Task(), functor_(nullptr),
+    MultiLoopTask(std::string label) : Task(label), functor_(nullptr),
     functorCounter_(0) {}
     /*! \brief
      * Set the functor (work) to be done.
@@ -401,7 +406,7 @@ private:
 
 class BasicTask : public Task {
 public:
-    BasicTask() : Task(), functor_(nullptr), containedMultiLoopTask_(nullptr) {}
+    BasicTask(std::string label) : Task(label), functor_(nullptr), containedMultiLoopTask_(nullptr) {}
     /*! \brief
      * Set the functor (work) to be done.
      *

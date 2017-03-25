@@ -528,6 +528,21 @@ public:
             }
         }
     }
+    /*! \brief
+     * Print to stdout the current subtask assignments. Useful for diagnostics,
+     * debugging, and making charts and graphs.
+     */
+    void printAssignments() {
+       for (int t=0; t<getNumThreads(); t++) {
+           std::cout << "Thread " << t << std::endl;
+           for (int s=0; s<getNumSubTasks(t); s++) {
+               SubTask* subtask = threadSubTasks_[t][s];
+               std::cout << subtask->getTask()->getLabel();
+               std::cout << " " << subtask->range_.start.toString();
+               std::cout << " " << subtask->range_.end.toString() << std::endl;
+           }
+       } 
+    }
 private:
     const Task* getCurrentTask() {
         int tid = Thread::getId();
@@ -575,13 +590,13 @@ private:
             assert(v==tasks_.size());
             switch (ttype) {
             case TaskType::BASIC:
-                tasks_.emplace_back(std::unique_ptr<Task>(new BasicTask()));
+                tasks_.emplace_back(std::unique_ptr<Task>(new BasicTask(label)));
                 break;
             case TaskType::LOOP:
-                tasks_.emplace_back(std::unique_ptr<Task>(new LoopTask()));
+                tasks_.emplace_back(std::unique_ptr<Task>(new LoopTask(label)));
                 break;
             case TaskType::MULTILOOP:
-                tasks_.emplace_back(std::unique_ptr<Task>(new MultiLoopTask()));
+                tasks_.emplace_back(std::unique_ptr<Task>(new MultiLoopTask(label)));
                 break;
             }
             taskLabels_[label] = v;

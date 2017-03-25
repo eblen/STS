@@ -255,8 +255,11 @@ public:
         }
         else {
             // Instances with a default schedule can be run at any time except
-            // in the middle of an active schedule.
-            assert(instance_->isActive_ == false);
+            // in the middle of a different schedule.
+            // The second check is necessary only because we want to support run
+            // calls nested inside loops. Default schedules are only active while
+            // running a loop.
+            assert(instance_->isActive_ == false || this == instance_);
         }
         if (!isTaskAssigned(label) || bUseDefaultSchedule_) {
             function();
@@ -362,6 +365,10 @@ public:
     }
     //! Wait for specific task to finish
     void waitForTask(std::string label) {
+        // No async with default schedule, so no need for waiting
+        if (bUseDefaultSchedule_) {
+            return;
+        }
         assert(isTaskAssigned(label));
         int t = getTaskId(label);
         tasks_[t]->wait();

@@ -366,10 +366,13 @@ public:
     //! Wait for specific task to finish
     void waitForTask(std::string label) {
         // No async with default schedule, so no need for waiting
-        if (bUseDefaultSchedule_) {
+        // TODO: Consider whether second condition should be an assertion
+        // failure. While it is odd to wait on an unassigned task, it does
+        // make coding more flexible (allows waiting on a task that doesn't
+        // always run without having to explicitly check for that case).
+        if (bUseDefaultSchedule_ || (!isTaskAssigned(label))) {
             return;
         }
-        assert(isTaskAssigned(label));
         int t = getTaskId(label);
         tasks_[t]->wait();
     }

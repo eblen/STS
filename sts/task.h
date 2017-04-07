@@ -13,6 +13,7 @@
 
 using namespace std::chrono;
 using sts_clock = steady_clock;
+static const auto STS_MAX_TIME_POINT = time_point<sts_clock>::max();
 
 //! \internal Interface of the executable function of a task
 class ITaskFunctor {
@@ -80,10 +81,22 @@ BasicTaskFunctor<F>* createBasicTaskFunctor(F f) {
 class Task;
 
 struct TaskTimes {
-    time_point<sts_clock> waitStart;
-    time_point<sts_clock> runStart;
-    time_point<sts_clock> runEnd;
+public:
+    time_point<sts_clock> waitStart;    // Time when work requested
+    time_point<sts_clock> runStart;     // Time when work started
+    time_point<sts_clock> runEnd;       // Time when work finished
+    time_point<sts_clock> nextRunAvail; // Time when next run (subtask) was ready
     std::map< std::string, std::vector<time_point<sts_clock>> > auxTimes;
+    void clear() {
+        waitStart    = STS_MAX_TIME_POINT;
+        runStart     = STS_MAX_TIME_POINT;
+        runEnd       = STS_MAX_TIME_POINT;
+        nextRunAvail = STS_MAX_TIME_POINT;
+        auxTimes.clear();
+    }
+    TaskTimes() {
+       clear();
+    }
 };
 
 /*! \internal \brief
@@ -125,6 +138,18 @@ public:
         auto s = time_point_cast<microseconds>(timeData_.runEnd);
         return s.time_since_epoch().count();
     }
+    long getNextRunAvailTime() const {
+        auto s = time_point_cast<microseconds>(timeData_.nextRunAvail);
+        return s.time_since_epoch().count();
+    }
+    /*! \brief
+     * Set time when the next subtask became available (lambda was set)
+     *
+     * \param[in] t time in microseconds since epoch
+     */
+    void setNextRunAvailTime(long t) {
+       timeData_.nextRunAvail = time_point<sts_clock>(microseconds(t));
+    }
     long getWaitDuration() const {
         return getRunStartTime() - getWaitStartTime();
     }
@@ -145,8 +170,8 @@ public:
         }
         return times;
     }
-    void clearAuxTimes() {
-        timeData_.auxTimes.clear();
+    void clearTimes() {
+        timeData_.clear();
     }
     const int threadId_;
     const Range<Ratio> range_;     /**< Range (out of [0,1]) of loop part */
@@ -171,7 +196,8 @@ private:
 class Task {
 public:
     enum Priority {NORMAL, HIGH};
-    Task(std::string l) :reduction_(nullptr), label(l), numThreads_(0), priority_(NORMAL) {}
+    Task(std::string l) :reduction_(nullptr), label(l), numThreads_(0),
+                         priority_(NORMAL), functorSetTime_(STS_MAX_TIME_POINT) {}
     /*! \brief
      * Add a new subtask for this task
      *
@@ -221,7 +247,7 @@ public:
     void restart() {
         for (std::unique_ptr<SubTask> &st : subtasks_) {
             st->setDone(false);
-            st->clearAuxTimes();
+            st->clearTimes();
         }
         init();
     }
@@ -258,8 +284,31 @@ public:
         }
         return nullptr;
     }
-    //! \brief Set the functor (work) to be done
-    virtual void setFunctor(ITaskFunctor*) = 0;
+    std::vector<const SubTask*> getSubTasks() const {
+        std::vector<const SubTask*> v;
+        for (auto const& st : subtasks_) {
+            v.push_back(st.get());
+        }
+        return v;
+    }
+    /*! \brief
+     * Set the functor (work) to be done.
+     *
+     * In the base class, we simply log the time of setting the functor
+     * (important for load balancing) and call the subclass implementation.
+     *
+     * Note: Implementatons assume ownership of the passed functor.
+     *
+     * \param[in] f Task functor
+     */
+    void setFunctor(ITaskFunctor* f) {
+        setFunctorImpl(f);
+        functorSetTime_ = sts_clock::now();
+    }
+    long getFunctorSetTime() const {
+        auto s = time_point_cast<microseconds>(functorSetTime_);
+        return s.time_since_epoch().count();
+    }
     //! \brief Return whether task is ready to run
     virtual bool isReady() const = 0;
     //! \brief Run the functor in the specified range
@@ -270,6 +319,7 @@ public:
 protected:
     void*    reduction_;
 private:
+    virtual void setFunctorImpl(ITaskFunctor*) = 0;
     std::string label;
     /*! \brief
      * Initialize the task. This function is called by "restart" and should do
@@ -283,6 +333,7 @@ private:
     //! Map STS thread id to an id only for this task (task ids are consecutive starting from 0)
     std::map<int, int> threadTaskIds_;
     Priority priority_;
+    time_point<sts_clock> functorSetTime_;
 };
 
 /*! \brief
@@ -291,24 +342,6 @@ private:
 class LoopTask : public Task {
 public:
     LoopTask(std::string label) : Task(label), functor_(nullptr) {}
-    /*! \brief
-     * Set the functor (work) to be done.
-     *
-     * Note: Takes ownership of passed functor
-     *
-     * This releases a barrier so that threads who have or will call run can
-     * proceed.
-     *
-     * This function is not thread safe and is intended to be called only by
-     * the main thread (thread running the containing basic task or thread 0
-     * for the default schedule).
-     *
-     * \param[in] f Task functor
-     */
-    void setFunctor(ITaskFunctor* f) override {
-        functor_.reset(f);
-        functorBeginBarrier_.open();
-    }
     /*! \brief
      * Return whether task is ready to run
      */
@@ -346,6 +379,24 @@ public:
     }
 private:
     /*! \brief
+     * Set the functor (work) to be done.
+     *
+     * Note: Takes ownership of passed functor
+     *
+     * This releases a barrier so that threads who have or will call run can
+     * proceed.
+     *
+     * This function is not thread safe and is intended to be called only by
+     * the main thread (thread running the containing basic task or thread 0
+     * for the default schedule).
+     *
+     * \param[in] f Task functor
+     */
+    void setFunctorImpl(ITaskFunctor* f) override {
+        functor_.reset(f);
+        functorBeginBarrier_.open();
+    }
+    /*! \brief
      * Reset this object for running a new functor. Nullifies any stored
      * functors and resets barriers. Intended only to be called by thread 0
      * in-between steps.
@@ -364,26 +415,6 @@ class MultiLoopTask : public Task {
 public:
     MultiLoopTask(std::string label) : Task(label), functor_(nullptr),
     functorCounter_(0) {}
-    /*! \brief
-     * Set the functor (work) to be done.
-     *
-     * Note: Takes ownership of passed functor
-     *
-     * Unlike LoopTask, an atomic counter is incremented when a new function is
-     * assigned. More than a simple barrier is necessary to support multiple
-     * functor assignments within a single step.
-     *
-     * This function is not thread safe and is intended to be called only by
-     * the main thread (thread running the containing basic task). MultiLoops
-     * do not occur with a default schedule.
-     *
-     * \param[in] f Task functor
-     */
-    void setFunctor(ITaskFunctor* f) override {
-        functorEndBarrier_.close(this->getNumThreads());
-        functor_.reset(f);
-        functorCounter_++;
-    }
     /*! \brief
      * Return whether task is ready to run
      */
@@ -436,6 +467,26 @@ public:
     }
 private:
     /*! \brief
+     * Set the functor (work) to be done.
+     *
+     * Note: Takes ownership of passed functor
+     *
+     * Unlike LoopTask, an atomic counter is incremented when a new function is
+     * assigned. More than a simple barrier is necessary to support multiple
+     * functor assignments within a single step.
+     *
+     * This function is not thread safe and is intended to be called only by
+     * the main thread (thread running the containing basic task). MultiLoops
+     * do not occur with a default schedule.
+     *
+     * \param[in] f Task functor
+     */
+    void setFunctorImpl(ITaskFunctor* f) override {
+        functorEndBarrier_.close(this->getNumThreads());
+        functor_.reset(f);
+        functorCounter_++;
+    }
+    /*! \brief
      * Reset this object for running a new set of functors. Nullifies any
      * stored functors and resets counters and end barrier. Intended only to
      * be called by thread 0 in-between steps.
@@ -455,23 +506,6 @@ private:
 class BasicTask : public Task {
 public:
     BasicTask(std::string label) : Task(label), functor_(nullptr), containedMultiLoopTask_(nullptr) {}
-    /*! \brief
-     * Set the functor (work) to be done.
-     *
-     * Note: Takes ownership of passed functor
-     *
-     * This releases a barrier so that thread who has or will call run can
-     * proceed.
-     *
-     * This function is not thread safe and is intended to be called only by
-     * thread 0 (basic tasks cannot be nested in other tasks).
-     *
-     * \param[in] f Task functor
-     */
-    void setFunctor(ITaskFunctor* f) override {
-        functor_.reset(f);
-        functorBeginBarrier_.open();
-    }
     /*! \brief
      * Return whether task is ready to run
      */
@@ -521,6 +555,23 @@ public:
         functorEndBarrier_.wait();
     }
 private:
+    /*! \brief
+     * Set the functor (work) to be done.
+     *
+     * Note: Takes ownership of passed functor
+     *
+     * This releases a barrier so that thread who has or will call run can
+     * proceed.
+     *
+     * This function is not thread safe and is intended to be called only by
+     * thread 0 (basic tasks cannot be nested in other tasks).
+     *
+     * \param[in] f Task functor
+     */
+    void setFunctorImpl(ITaskFunctor* f) override {
+        functor_.reset(f);
+        functorBeginBarrier_.open();
+    }
     /*! \brief
      * Reset this object for running a new functor. Nullifies any stored
      * functors and resets barriers. Intended only to be called by thread 0

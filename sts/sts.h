@@ -564,6 +564,18 @@ public:
     const SubTask* getSubTask(int threadId, int subTaskId) const {
         return threadSubTasks_[threadId][subTaskId];
     }
+    const SubTask* getSubTask(int threadId, std::string label, int numToFind=1) const {
+        int numFound = 0;
+        for (SubTask* st : threadSubTasks_[threadId]) {
+            if (st->getTask()->getLabel() == label) {
+                numFound++;
+                if (numFound == numToFind) {
+                    return st;
+                }
+            }
+        }
+        return nullptr;
+    }
 private:
     SubTask* getCurrentSubTask() const {
         int tid = Thread::getId();
@@ -668,6 +680,10 @@ private:
         std::stack<int>& cstack = threadCallStacks_[tid];
         cstack.push(stid);
         bool isDone = threadSubTasks_[tid][stid]->run();
+        if (stid > 0) {
+            threadSubTasks_[tid][stid-1]->setNextRunAvailTime(
+            threadSubTasks_[tid][stid]->getTask()->getFunctorSetTime());
+        }
         cstack.pop();
         threadSubTasks_[tid][stid]->setDone(isDone);
     }

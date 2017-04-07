@@ -7,8 +7,9 @@
 // TODO: Support negative ratios in all operations
 class Ratio {
 public:
-    Ratio(int n, int d=1) : nom_(n), denom_(d) {} ;
-    operator int() { return nom_/denom_; }
+    Ratio()               : nom_(0), denom_(1) {}
+    Ratio(int n, int d=1) : nom_(n), denom_(d) {}
+    operator int() const { return nom_/denom_; }
     Ratio reduce() {
         int gcd = Ratio::gcd(nom_, denom_);
         nom_ /= gcd;
@@ -36,13 +37,20 @@ private:
 template<class T>
 class Range {
 public:
+    Range() {}
     Range(T s, T e) : start(s), end(e) {} 
     explicit Range(T e) : start(0), end(e) {}
     template<class R>
-    operator Range<R>() { return Range<R>(start, end); }
-    Range<T> subset(Range<Ratio> p) {
+    operator Range<R>() const { return Range<R>(start, end); }
+    Range<T> subset(Range<Ratio> p) const {
         Range<T> r = p * (end - start);
         return r + start;
+    }
+    std::string toString() const {
+        return start.toString() + " " + end.toString();
+    }
+    T len() const {
+        return end - start;
     }
     T start, end;
 };

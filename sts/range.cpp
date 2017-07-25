@@ -1,7 +1,7 @@
 #include "range.h"
 
-Ratio operator*(Ratio r, int n) { return Ratio(r.nom_*n,r.denom_); }
-Ratio operator*(int n, Ratio r) { return r*n; }
+Ratio operator*(Ratio r, int64_t n) { return Ratio(r.nom_*n,r.denom_); }
+Ratio operator*(int64_t n, Ratio r) { return r*n; }
 Ratio operator*(Ratio r1, Ratio r2) {
    return Ratio(r1.nom_ * r2.nom_ , r1.denom_ * r2.denom_).reduce();
 }

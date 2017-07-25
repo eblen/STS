@@ -116,8 +116,7 @@ public:
                            this part. Ignored for basic tasks.
      */
     SubTask(int tid, Task *task, Range<Ratio> range) :threadId_(tid),
-    range_(range), task_(task),
-    isDone_(false) {}
+    task_(task), range_(range), isDone_(false) {}
     /*! \brief
      * Run the subtask
      */
@@ -173,10 +172,16 @@ public:
     void clearTimes() {
         timeData_.clear();
     }
+    Range<Ratio> getRange() const {
+        return range_;
+    }
+    void setRange(Range<Ratio> r) {
+        range_ = r;
+    }
     const int threadId_;
-    const Range<Ratio> range_;     /**< Range (out of [0,1]) of loop part */
 private:
     Task *task_;             /**< Reference to main task */
+    Range<Ratio> range_;     /**< Range (out of [0,1]) of loop part */
     bool isDone_;
     TaskTimes timeData_;
 };
@@ -290,6 +295,21 @@ public:
             v.push_back(st.get());
         }
         return v;
+    }
+    /*! \brief
+     * Set ranges for the subtasks of a task
+     *
+     * \param[in] intervals vector of ratios marking start and end points for each subtask
+     * Example: setSubTaskRanges("reduce", {0,{1,6},{3,6},{4,6},1}
+     */
+    void setSubTaskRanges(std::vector<Ratio> intervals) {
+        assert(intervals.size() == subtasks_.size()+1);
+        assert(intervals[0] == 0);
+        assert(intervals.back() == 1);
+        for (size_t i=0; i<subtasks_.size(); i++) {
+            assert(intervals[i] < intervals[i+1]);
+            subtasks_[i]->setRange({intervals[i],intervals[i+1]});
+        }
     }
     /*! \brief
      * Set the functor (work) to be done.

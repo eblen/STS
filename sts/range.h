@@ -8,10 +8,10 @@
 class Ratio {
 public:
     Ratio()               : nom_(0), denom_(1) {}
-    Ratio(int n, int d=1) : nom_(n), denom_(d) {}
-    operator int() const { return nom_/denom_; }
+    Ratio(int64_t n, int64_t d=1) : nom_(n), denom_(d) {}
+    operator double() const { return (double)nom_/(double)denom_; }
     Ratio reduce() {
-        int gcd = Ratio::gcd(nom_, denom_);
+        int64_t gcd = Ratio::gcd(nom_, denom_);
         nom_ /= gcd;
         denom_ /= gcd;
         return *this;
@@ -19,15 +19,15 @@ public:
     std::string toString() const {
         return std::to_string(nom_) + "/" + std::to_string(denom_);
     }
-    static int gcd(int a, int b) {
+    static int64_t gcd(int64_t a, int64_t b) {
         assert(a >= 0 && b >= 0);
         if (a == 0) return b;
         if (b == 0) return a;
         return gcd(b,a%b);
     }
 private:
-    int nom_, denom_;
-    friend Ratio operator*(Ratio, int);
+    int64_t nom_, denom_;
+    friend Ratio operator*(Ratio, int64_t);
     friend Ratio operator*(Ratio, Ratio);
     friend Ratio operator+(Ratio, Ratio);
     friend Ratio operator+=(Ratio &, Ratio);
@@ -56,13 +56,13 @@ public:
 };
 
 template<class T>
-Range<T> operator*(Range<T> r, int n) { return Range<T>(r.start*n, r.end*n); }
+Range<T> operator*(Range<T> r, int64_t n) { return Range<T>(r.start*n, r.end*n); }
 template<class T>
-Range<T> operator*(int n, Range<T> r) { return r*n; }
+Range<T> operator*(int64_t n, Range<T> r) { return r*n; }
 
 template<class T>
-Range<T> operator+(Range<T> r, int n) { return Range<T>(r.start+n, r.end+n); }
+Range<T> operator+(Range<T> r, int64_t n) { return Range<T>(r.start+n, r.end+n); }
 template<class T>
-Range<T> operator+(int n, Range<T> r) { return r+n; }
+Range<T> operator+(int64_t n, Range<T> r) { return r+n; }
 
 #endif // STS_RANGE_H

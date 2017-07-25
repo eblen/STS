@@ -464,6 +464,19 @@ public:
         return ttid;
     }
     /*! \brief
+     * Set ranges for the subtasks of a task
+     *
+     * \param[in] label  task label
+     * \param[in] intervals vector of ratios marking start and end points for each subtask
+     * Example: setTaskRanges("reduce", {0,{1,6},{3,6},{4,6},1}
+     */ 
+    void setTaskRanges(std::string label, std::vector<Ratio> intervals) {
+        assert(isTaskAssigned(label));
+        int id = getTaskId(label);
+        tasks_[id]->setSubTaskRanges(intervals);
+
+    }
+    /*! \brief
      * Load atomic step counter
      *
      * \returns step counter
@@ -539,8 +552,7 @@ public:
         for (; stid < getNumSubTasks(tid); stid++) {
             SubTask* subtask = threadSubTasks_[tid][stid];
             // TODO: Decide on the exact policy for what tasks will be considered
-            if (!subtask->isDone() && subtask->getTask()->getPriority() ==
-                    Task::HIGH && subtask->isReady()) {
+            if (!subtask->isDone() && subtask->getTask()->getPriority() == Task::HIGH) {
                 runSubTask(stid);
                 return;
             }
@@ -556,8 +568,8 @@ public:
            for (int s=0; s<getNumSubTasks(t); s++) {
                SubTask* subtask = threadSubTasks_[t][s];
                std::cout << subtask->getTask()->getLabel();
-               std::cout << " " << subtask->range_.start.toString();
-               std::cout << " " << subtask->range_.end.toString() << std::endl;
+               std::cout << " " << subtask->getRange().start.toString();
+               std::cout << " " << subtask->getRange().end.toString() << std::endl;
            }
        } 
     }

@@ -307,7 +307,7 @@ public:
         assert(intervals[0] == 0);
         assert(intervals.back() == 1);
         for (size_t i=0; i<subtasks_.size(); i++) {
-            assert(intervals[i] < intervals[i+1]);
+            assert(intervals[i] <= intervals[i+1]);
             subtasks_[i]->setRange({intervals[i],intervals[i+1]});
         }
     }

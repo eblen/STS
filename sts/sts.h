@@ -117,13 +117,11 @@ public:
      * The order of assign calls specifies in which order the thread executes the tasks.
      *
      * \param[in] label    Label of the task. Needs to match the run()/parallel_for() label
-     * \param[in] ttype    Task type
      * \param[in] threadId Id of thread assigned the work
      * \param[in] range    Assigned range for a loop task. Ignored for a basic task.
      */
-    enum class TaskType {BASIC, LOOP};
-    void assign(std::string label, TaskType ttype, int threadId, Range<Ratio> range) {
-        int id = setTask(label, ttype);
+    void assign(std::string label, int threadId, Range<Ratio> range) {
+        int id = setTask(label);
         assert(range.start>=0 && range.end<=1);
         SubTask* t = new SubTask(threadId, tasks_[id].get(), range);
         threadSubTasks_[threadId].push_back(t);
@@ -136,7 +134,7 @@ public:
      * \param[in] threadId Id of thread assigned the work
      */
     void assign_run(std::string label, int threadId) {
-        assign(label, TaskType::BASIC, threadId, Range<Ratio>(1));
+        assign(label, threadId, Range<Ratio>(1));
     }
     /*! \brief
      * Assign a loop task to a single thread
@@ -146,7 +144,7 @@ public:
      * \param[in] range    range of loop executed by this thread
      */
     void assign_loop(std::string label, int threadId, const Range<Ratio> range) {
-        assign(label, TaskType::LOOP, threadId, range);
+        assign(label, threadId, range);
     }
     /*! \brief
      * Assign a loop task to a vector of threads. This will split the loop
@@ -278,7 +276,6 @@ public:
         Task* task = tasks_[taskId].get();
         assert(task != nullptr);
         // Must be a loop task
-        assert(std::type_index(typeid(*task))!=std::type_index(typeid(BasicTask)));
         task->setReduction(red);
         task->setFunctor(createLoopTaskFunctor(body, {start, end}));
         runNestedLoop(task);
@@ -593,7 +590,7 @@ private:
      * \param[in] label for task
      * \return task id
      */
-    int setTask(std::string label, TaskType ttype) {
+    int setTask(std::string label) {
         // TODO: Add asserts for schedule state (using isActive_ variable perhaps)
         assert(Thread::getId() == 0);
         auto it = taskLabels_.find(label);
@@ -603,14 +600,7 @@ private:
         else {
             unsigned int v = taskLabels_.size();
             assert(v==tasks_.size());
-            switch (ttype) {
-            case TaskType::BASIC:
-                tasks_.emplace_back(std::unique_ptr<Task>(new BasicTask(label)));
-                break;
-            case TaskType::LOOP:
-                tasks_.emplace_back(std::unique_ptr<Task>(new LoopTask(label)));
-                break;
-            }
+            tasks_.emplace_back(std::unique_ptr<Task>(new Task(label)));
             taskLabels_[label] = v;
             return v;
         }
@@ -624,7 +614,6 @@ private:
     void collect(T a, int ttid) {
         const Task* t = getCurrentTask();
         // Must be a loop task
-        assert(std::type_index(typeid(*t))!=std::type_index(typeid(const BasicTask)));
         // TODO: How to handle these user errors - calling collect outside of a
         // task or for a task without a reduction?
         if (t == nullptr) {

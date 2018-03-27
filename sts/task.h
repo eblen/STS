@@ -187,22 +187,22 @@ private:
 };
 
 /*! \internal \brief
- * Base task class that handles the storage and bookkeeping of subtasks,
- * common operations needed by all subclasses. It also stores reduction
- * functions and task priority.
+ * Task class for both loops and non-loops.
  *
- * Each subtask is assigned to a single thread, and this class assigns a
- * Task-specific thread id to all participating threads. Subclasses store
- * the actual function and actually execute the task.
+ * Tasks are made up of subtasks, one for a non-loop task and one or more for
+ * a loop task. Each subtask is done by a single thread, and this class assigns
+ * a task-specific thread id to all participating threads. These ids start at
+ * zero and are contiguous.
  *
- * Note that for non-loop tasks, only a single subtask and thread are
- * needed, and thus much of this infrastructure is unused.
+ * Note that for non-loop tasks, only a single subtask and thread are needed,
+ * and thus much of the infrastructure in this class is superfluous.
  */
 class Task {
 public:
     enum Priority {NORMAL, HIGH};
     Task(std::string l) :reduction_(nullptr), label(l), numThreads_(0),
-                         priority_(NORMAL), functorSetTime_(STS_MAX_TIME_POINT) {}
+                         priority_(NORMAL), functorSetTime_(STS_MAX_TIME_POINT),
+                         functor_(nullptr) {}
     /*! \brief
      * Add a new subtask for this task
      *
@@ -329,115 +329,10 @@ public:
         auto s = time_point_cast<microseconds>(functorSetTime_);
         return s.time_since_epoch().count();
     }
-    //! \brief Return whether task is ready to run
-    virtual bool isReady() const = 0;
-    //! \brief Run the functor in the specified range
-    virtual bool run(Range<Ratio>, TaskTimes &td) = 0;
-    //! \brief Wait for the functor to complete
-    virtual void wait() = 0;
-    virtual ~Task() {}
-protected:
-    void*    reduction_;
-private:
-    virtual void setFunctorImpl(ITaskFunctor*) = 0;
-    std::string label;
-    /*! \brief
-     * Initialize the task. This function is called by "restart" and should do
-     * all necessary steps to ready the task for doing work (initializing
-     * barriers, counters, variables, etc.).
-     */
-    virtual void  init() = 0;
-    //! All subtasks of this task. One for each section of a loop. One for a basic task.
-    std::vector<std::unique_ptr<SubTask>> subtasks_; //!< Subtasks to be executed by a single thread
-    int numThreads_;
-    //! Map STS thread id to an id only for this task (task ids are consecutive starting from 0)
-    std::map<int, int> threadTaskIds_;
-    Priority priority_;
-    time_point<sts_clock> functorSetTime_;
-};
-
-/*! \brief
- * Class for loop tasks
- */
-class LoopTask : public Task {
-public:
-    LoopTask(std::string label) : Task(label), functor_(nullptr) {}
     /*! \brief
      * Return whether task is ready to run
      */
-    bool isReady() const override {
-        return functorBeginBarrier_.isOpen();
-    }
-    /*! \brief
-     * Run the functor for the specified range
-     *
-     * This function is thread-safe and intended to be called by all
-     * participating threads. It synchronizes threads and marks when they
-     * complete.
-     *
-     * \param[in] range Range of function to run
-     * \return whether all functors have been assigned for this task, which
-     *         is always true for a LoopTask after running its single task.
-     */
-    bool run(Range<Ratio> range, TaskTimes &td) override {
-        td.waitStart = sts_clock::now();
-        functorBeginBarrier_.wait();
-        td.runStart = sts_clock::now();
-        functor_->run(range);
-        td.runEnd = sts_clock::now();
-        functorEndBarrier_.markArrival();
-        return true;
-    }
-    /*! \brief
-     * Wait for all participating threads to finish
-     *
-     * Normally called by main thread but can be called by any thread to
-     * wait for task to complete. Is thread-safe.
-     */
-    void wait() override {
-        functorEndBarrier_.wait();
-    }
-private:
-    /*! \brief
-     * Set the functor (work) to be done.
-     *
-     * Note: Takes ownership of passed functor
-     *
-     * This releases a barrier so that threads who have or will call run can
-     * proceed.
-     *
-     * This function is not thread safe and is intended to be called only by
-     * the main thread (thread running the containing basic task or thread 0
-     * for the default schedule).
-     *
-     * \param[in] f Task functor
-     */
-    void setFunctorImpl(ITaskFunctor* f) override {
-        functor_.reset(f);
-        functorBeginBarrier_.open();
-    }
-    /*! \brief
-     * Reset this object for running a new functor. Nullifies any stored
-     * functors and resets barriers. Intended only to be called by thread 0
-     * in-between steps.
-     */
-    void init() override {
-        functor_.reset(nullptr);
-        functorBeginBarrier_.close();
-        functorEndBarrier_.close(this->getNumSubtasks());
-    }
-    std::unique_ptr<ITaskFunctor> functor_;      //!< The function/loop to execute
-    MOBarrier functorBeginBarrier_; //!< Many-to-one barrier to sync threads at beginning of loop
-    OMBarrier functorEndBarrier_; //!< One-to-many barrier to sync threads at end of loop
-};
-
-class BasicTask : public Task {
-public:
-    BasicTask(std::string label) : Task(label), functor_(nullptr) {}
-    /*! \brief
-     * Return whether task is ready to run
-     */
-    bool isReady() const override {
+    bool isReady() const {
         return functorBeginBarrier_.isOpen();
     }
     /*! \brief
@@ -450,7 +345,7 @@ public:
      * \return whether all functors have been assigned for this task, which
      *         is always true for a BasicTask after running its single task.
      */
-    bool run(Range<Ratio> range, TaskTimes &td) override {
+    bool run(Range<Ratio> range, TaskTimes &td) {
         td.waitStart = sts_clock::now();
         functorBeginBarrier_.wait();
         td.runStart = sts_clock::now();
@@ -465,9 +360,12 @@ public:
      * Normally called by main thread but can be called by any thread to
      * wait for task to complete. Is thread-safe.
      */
-    void wait() override {
+    void wait() {
         functorEndBarrier_.wait();
     }
+    // Default destructor ok
+protected:
+    void*    reduction_;
 private:
     /*! \brief
      * Set the functor (work) to be done.
@@ -482,20 +380,28 @@ private:
      *
      * \param[in] f Task functor
      */
-    void setFunctorImpl(ITaskFunctor* f) override {
+    void setFunctorImpl(ITaskFunctor* f) {
         functor_.reset(f);
         functorBeginBarrier_.open();
     }
+    std::string label;
     /*! \brief
-     * Reset this object for running a new functor. Nullifies any stored
+     * initialize this object for running a new functor. Nullifies any stored
      * functors and resets barriers. Intended only to be called by thread 0
-     * in-between steps.
+     * in-between steps. Called by "restart" method.
      */
-    void init() override {
+    void init() {
         functor_.reset(nullptr);
         functorBeginBarrier_.close();
         functorEndBarrier_.close(this->getNumSubtasks());
     }
+    //! All subtasks of this task. One for each section of a loop. One for a basic task.
+    std::vector<std::unique_ptr<SubTask>> subtasks_; //!< Subtasks to be executed by a single thread
+    int numThreads_;
+    //! Map STS thread id to an id only for this task (task ids are consecutive starting from 0)
+    std::map<int, int> threadTaskIds_;
+    Priority priority_;
+    time_point<sts_clock> functorSetTime_;
     std::unique_ptr<ITaskFunctor> functor_;      //!< The function/loop to execute
     MOBarrier functorBeginBarrier_; //!< Many-to-one barrier to sync threads at beginning of loop
     OMBarrier functorEndBarrier_; //!< One-to-many barrier to sync threads at end of loop

@@ -121,7 +121,7 @@ public:
      * \param[in] threadId Id of thread assigned the work
      * \param[in] range    Assigned range for a loop task. Ignored for a basic task.
      */
-    enum class TaskType {BASIC, LOOP, MULTILOOP};
+    enum class TaskType {BASIC, LOOP};
     void assign(std::string label, TaskType ttype, int threadId, Range<Ratio> range) {
         int id = setTask(label, ttype);
         assert(range.start>=0 && range.end<=1);
@@ -137,45 +137,6 @@ public:
      */
     void assign_run(std::string label, int threadId) {
         assign(label, TaskType::BASIC, threadId, Range<Ratio>(1));
-    }
-    /*! \brief
-     * Assign a basic task to a single thread along with a set of helper threads
-     * to execute contained loops.
-     *
-     * Note that helper threads wait until the basic task completes. Loops should
-     * be assigned explicitly if more fine-grained control is needed.
-     *
-     * \param[in] label         Label of the task
-     * \param[in] threadId      Id of thread assigned the work
-     * \param[in] helperThreads vector of threads that execute contained loops
-     */
-    void assign_run(std::string label, int threadId, const std::vector<int> &helperThreads) {
-        assign_run(label, threadId);
-        int nthreads = helperThreads.size();
-        int numer = 0;
-        int denom = nthreads;
-        std::string loopTaskLabel = label + "_multiloop";
-        // Main thread of a basic task is always a helper thread too. So add it
-        // as a helper if not already listed.
-        if (std::find(helperThreads.begin(), helperThreads.end(), threadId) == helperThreads.end()) {
-            denom++;
-            numer++;
-            assign(loopTaskLabel, TaskType::MULTILOOP, threadId, {1, denom});
-        }
-        for (int i=0; i<nthreads; i++, numer++) {
-            assign(loopTaskLabel, TaskType::MULTILOOP, helperThreads[i], {{numer, denom},{numer+1, denom}});
-        }
-
-        // Link the basic task with its loop task
-        int parentId = getTaskId(label);
-        int childId  = getTaskId(loopTaskLabel);
-        Task* pTask = tasks_[parentId].get();
-        Task* cTask = tasks_[childId].get();
-        assert(std::type_index(typeid(*pTask))==std::type_index(typeid(BasicTask)));
-        assert(std::type_index(typeid(*cTask))==std::type_index(typeid(MultiLoopTask)));
-        BasicTask*     parentTask = static_cast<BasicTask*>(pTask);
-        MultiLoopTask* childTask  = static_cast<MultiLoopTask*>(cTask);
-        parentTask->setMultiLoop(childTask);
     }
     /*! \brief
      * Assign a loop task to a single thread
@@ -648,9 +609,6 @@ private:
                 break;
             case TaskType::LOOP:
                 tasks_.emplace_back(std::unique_ptr<Task>(new LoopTask(label)));
-                break;
-            case TaskType::MULTILOOP:
-                tasks_.emplace_back(std::unique_ptr<Task>(new MultiLoopTask(label)));
                 break;
             }
             taskLabels_[label] = v;

@@ -431,101 +431,9 @@ private:
     OMBarrier functorEndBarrier_; //!< One-to-many barrier to sync threads at end of loop
 };
 
-class MultiLoopTask : public Task {
-public:
-    MultiLoopTask(std::string label) : Task(label), functor_(nullptr),
-    functorCounter_(0) {}
-    /*! \brief
-     * Return whether task is ready to run
-     */
-    bool isReady() const override {
-        int localThreadId = this->getThreadId(Thread::getId());
-        return functorCounter_.load() != threadCounters_[localThreadId];
-    }
-    /*! \brief
-     * Mark that no more functions will be assigned during the current step.
-     *
-     * While thread-safe, this is intended to only be called by the main thread
-     * once the containing basic task completes.
-     */
-    void markFinished() {
-        functorCounter_ = -1;
-    }
-    /*! \brief
-     * Run the functor for the specified range
-     *
-     * This function is thread-safe and intended to be called by all
-     * participating threads. It synchronizes threads and marks when they
-     * complete. Unlike LoopTask, each thread has a unique counter used to
-     * synchronize running multiple functors.
-     *
-     * \param[in] range Range of function to run
-     * \return whether all functors have been assigned for this task. If
-     *         not, thread should call run again.
-     */
-    bool run(Range<Ratio> range, TaskTimes &td) override {
-        int localThreadId = this->getThreadId(Thread::getId());
-        td.waitStart = sts_clock::now();
-        wait_until_not(functorCounter_, threadCounters_[localThreadId]++);
-        if (functorCounter_ == -1) {
-            return true;
-        }
-        td.runStart = sts_clock::now();
-        functor_->run(range);
-        td.runEnd = sts_clock::now();
-        functorEndBarrier_.markArrival();
-        return false;
-    }
-    /*! \brief
-     * Wait for all participating threads to finish
-     *
-     * Normally called by main thread but can be called by any thread to
-     * wait for task to complete. Is thread-safe.
-     */
-    void wait() override {
-        functorEndBarrier_.wait();
-    }
-private:
-    /*! \brief
-     * Set the functor (work) to be done.
-     *
-     * Note: Takes ownership of passed functor
-     *
-     * Unlike LoopTask, an atomic counter is incremented when a new function is
-     * assigned. More than a simple barrier is necessary to support multiple
-     * functor assignments within a single step.
-     *
-     * This function is not thread safe and is intended to be called only by
-     * the main thread (thread running the containing basic task). MultiLoops
-     * do not occur with a default schedule.
-     *
-     * \param[in] f Task functor
-     */
-    void setFunctorImpl(ITaskFunctor* f) override {
-        functorEndBarrier_.close(this->getNumThreads());
-        functor_.reset(f);
-        functorCounter_++;
-    }
-    /*! \brief
-     * Reset this object for running a new set of functors. Nullifies any
-     * stored functors and resets counters and end barrier. Intended only to
-     * be called by thread 0 in-between steps.
-     */
-    void init() override {
-        functorCounter_ = 0;
-        functor_.reset(nullptr);
-        functorEndBarrier_.close(this->getNumSubtasks());
-        threadCounters_.assign(this->getNumThreads(),0);
-    }
-    std::unique_ptr<ITaskFunctor> functor_;      //!< The function/loop to execute
-    OMBarrier functorEndBarrier_; //!< One-to-many barrier to sync threads at end of loop
-    std::atomic<int> functorCounter_;
-    std::vector<int> threadCounters_;
-};
-
 class BasicTask : public Task {
 public:
-    BasicTask(std::string label) : Task(label), functor_(nullptr), containedMultiLoopTask_(nullptr) {}
+    BasicTask(std::string label) : Task(label), functor_(nullptr) {}
     /*! \brief
      * Return whether task is ready to run
      */
@@ -549,21 +457,7 @@ public:
         functor_->run(range);
         td.runEnd = sts_clock::now();
         functorEndBarrier_.markArrival();
-        if (containedMultiLoopTask_ != nullptr) {
-            containedMultiLoopTask_->markFinished();
-        }
         return true;
-    }
-    /*! \brief
-     * Set that the given multiloop task is contained within this task. This is
-     * necessary so that this task can mark the multiloop task as finished once
-     * it itself completes.
-     *
-     * \param[in] mlt MultiLoopTask contained in this task.
-     */
-    void setMultiLoop(MultiLoopTask *mlt) {
-        assert(containedMultiLoopTask_ == nullptr);
-        containedMultiLoopTask_ = mlt;
     }
     /*! \brief
      * Wait for all participating threads to finish
@@ -605,7 +499,6 @@ private:
     std::unique_ptr<ITaskFunctor> functor_;      //!< The function/loop to execute
     MOBarrier functorBeginBarrier_; //!< Many-to-one barrier to sync threads at beginning of loop
     OMBarrier functorEndBarrier_; //!< One-to-many barrier to sync threads at end of loop
-    MultiLoopTask* containedMultiLoopTask_;
 };
 
 #endif // STS_TASK_H

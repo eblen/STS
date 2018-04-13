@@ -1,8 +1,13 @@
 #include "task.h"
 
 bool SubTask::run() {
-    isDone_ = task_->run(range_, timeData_);
-    return isDone_;
+    auto runner = task_->getRunner(range_, timeData_);
+    runner->wait();
+    while (!runner->isFinished()) {
+        runner->cont();
+        runner->wait();
+    }
+    return true;
 }
 const Task* SubTask::getTask() const {
     return task_;

@@ -59,6 +59,14 @@ public:
      * \returns thread Id
      */
     static int getId() { return id_; }
+    /*! \brief
+     * Set thread Id
+     *
+     * Allow a thread to change its id. This may be needed for threads created
+     * externally to this class that still need a non-zero id.
+     * \param[in] id
+     */
+    static void setId(int id) { id_ = id; }
 private:
     void doWork(); //function executed by worker threads
 

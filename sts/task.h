@@ -4,12 +4,14 @@
 #include <map>
 #include <set>
 #include <vector>
+#include <memory>
 
 #include <chrono>
 
 #include "barrier.h"
 #include "range.h"
 #include "thread.h"
+#include "lambdaRunner.h"
 
 using namespace std::chrono;
 using sts_clock = steady_clock;
@@ -345,14 +347,21 @@ public:
      * \return whether all functors have been assigned for this task, which
      *         is always true for a BasicTask after running its single task.
      */
-    bool run(Range<Ratio> range, TaskTimes &td) {
-        td.waitStart = sts_clock::now();
-        functorBeginBarrier_.wait();
-        td.runStart = sts_clock::now();
-        functor_->run(range);
-        td.runEnd = sts_clock::now();
-        functorEndBarrier_.markArrival();
-        return true;
+    std::unique_ptr<LambdaRunner> getRunner(Range<Ratio> range, TaskTimes &td) {
+        int tid = Thread::getId();
+        std::unique_ptr<LambdaRunner> lr(new LambdaRunner);
+        lr->run([&,range,tid] {
+            // Make sure subtasks run with the same thread id. Otherwise, calls
+            // to STS inside lambda will access the wrong data structures.
+            Thread::setId(tid);
+            td.waitStart = sts_clock::now();
+            functorBeginBarrier_.wait();
+            td.runStart = sts_clock::now();
+            functor_->run(range);
+            td.runEnd = sts_clock::now();
+            functorEndBarrier_.markArrival();
+        });
+        return lr;
     }
     /*! \brief
      * Wait for all participating threads to finish

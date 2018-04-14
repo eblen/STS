@@ -34,7 +34,7 @@ public:
      */
     Thread(int id) {
         if (id!=0) {
-            thread_.reset(new std::thread([=](){id_=id; doWork();}));
+            thread_.reset(new std::thread([=](){id_=id; core_=-1; doWork();}));
         }
     }
     //! Disable move constructor
@@ -67,11 +67,27 @@ public:
      * \param[in] id
      */
     static void setId(int id) { id_ = id; }
+     /*! \brief
+      * Return pinned core or -1 if thread is not pinned
+      *
+      * Note: This is a static method. Core returned depends on the thread executing
+      * not the object. Only use Thread::getCore() not t.getCore() to avoid confusion.
+      *
+      * \returns core number
+      */
+     static int getCore() { return core_; }
+     /*! \brief
+      * Set pinned core
+      *
+      * \param[in] core number
+      */
+     static void setCore(int core) { core_ = core; }
 private:
     void doWork(); //function executed by worker threads
 
     std::unique_ptr<std::thread> thread_;
     static thread_local int id_;
+    static thread_local int core_;
 };
 
 #endif // STS_THREAD_H

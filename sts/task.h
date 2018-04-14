@@ -349,7 +349,7 @@ public:
      */
     std::unique_ptr<LambdaRunner> getRunner(Range<Ratio> range, TaskTimes &td) {
         int tid = Thread::getId();
-        std::unique_ptr<LambdaRunner> lr(new LambdaRunner);
+        std::unique_ptr<LambdaRunner> lr(new LambdaRunner(Thread::getCore()));
         lr->run([&,range,tid] {
             // Make sure subtasks run with the same thread id. Otherwise, calls
             // to STS inside lambda will access the wrong data structures.

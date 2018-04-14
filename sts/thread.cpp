@@ -5,6 +5,7 @@
 #include <string>
 
 int thread_local Thread::id_ = 0;
+int thread_local Thread::core_ = -1;
 
 void Thread::doWork() {
     for (int i=0; ; i++) {

@@ -1,3 +1,6 @@
+#ifndef _LAMBDA_RUNNER_H
+#define _LAMBDA_RUNNER_H
+
 #include <cassert>
 #include <atomic>
 #include <condition_variable>
@@ -16,7 +19,7 @@ void setAffinity(int core);
 
 class LambdaRunner {
 public:
-    LambdaRunner(int core=-1) : finished_(true), doHalt_(false), isRunning_(true) {
+    LambdaRunner(int core=-1) : core_(core), finished_(true), doHalt_(false), isRunning_(true) {
         thread_.reset(new std::thread([core,this](){
             instance = this;
             if (core >= 0) {
@@ -43,6 +46,8 @@ public:
         cont();
         thread_->join();
     }
+
+    int getCore() {return core_;}
 
     // Called outside of lambda to start running a new lambda.
     // It is an error to call if current lambda is not finished.
@@ -90,6 +95,7 @@ public:
     static thread_local LambdaRunner* instance;
 
 private:
+    int core_;
     std::atomic<bool> finished_;
     std::atomic<bool> doHalt_;
     std::unique_ptr<std::thread> thread_;
@@ -100,3 +106,5 @@ private:
     std::condition_variable cv_;
     std::mutex mut_;
 };
+
+#endif // LAMBDA_RUNNER_H

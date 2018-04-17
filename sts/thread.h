@@ -8,6 +8,7 @@
 #include <atomic>
 #include <thread>
 
+#include "lrPool.h"
 #include "range.h"
 
 #if (__GNUC__ == 4 && __GNUC_MINOR__ <= 7) || (defined __ICC && __ICC <= 1400)
@@ -81,7 +82,10 @@ public:
       *
       * \param[in] core number
       */
-     static void setCore(int core) { core_ = core; }
+     static void setCore(int core) {
+         core_ = core;
+         LRPool::gpool.addCore(core);
+     }
 private:
     void doWork(); //function executed by worker threads
 

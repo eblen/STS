@@ -12,6 +12,7 @@
 #include "range.h"
 #include "thread.h"
 #include "lambdaRunner.h"
+#include "lrPool.h"
 
 using namespace std::chrono;
 using sts_clock = steady_clock;
@@ -204,7 +205,7 @@ public:
     enum Priority {NORMAL, HIGH};
     Task(std::string l) :reduction_(nullptr), label(l), numThreads_(0),
                          priority_(NORMAL), functorSetTime_(STS_MAX_TIME_POINT),
-                         functor_(nullptr) {}
+                         functor_(nullptr), isCoro_(false) {}
     /*! \brief
      * Add a new subtask for this task
      *
@@ -269,6 +270,12 @@ public:
     //! \brief Set task priority
     void setPriority(Priority p) {
         priority_ = p;
+    }
+    void setCoroutine() {
+        isCoro_ = true;
+    }
+    bool isCoroutine() const {
+        return isCoro_;
     }
     //! \brief Get reduction function
     void* getReduction() const {
@@ -337,6 +344,15 @@ public:
     bool isReady() const {
         return functorBeginBarrier_.isOpen();
     }
+    void run(Range<Ratio> range, TaskTimes &td) {
+        td.waitStart = sts_clock::now();
+        functorBeginBarrier_.wait();
+        td.runStart = sts_clock::now();
+        functor_->run(range);
+        td.runEnd = sts_clock::now();
+        functorEndBarrier_.markArrival();
+    }
+    // TODO: Comments out-of-date! Combine with "run" above.
     /*! \brief
      * Run the functor. The range argument is ignored.
      *
@@ -349,17 +365,12 @@ public:
      */
     std::unique_ptr<LambdaRunner> getRunner(Range<Ratio> range, TaskTimes &td) {
         int tid = Thread::getId();
-        std::unique_ptr<LambdaRunner> lr(new LambdaRunner(Thread::getCore()));
+        std::unique_ptr<LambdaRunner> lr = LRPool::gpool.get(Thread::getCore());
         lr->run([&,range,tid] {
             // Make sure subtasks run with the same thread id. Otherwise, calls
             // to STS inside lambda will access the wrong data structures.
             Thread::setId(tid);
-            td.waitStart = sts_clock::now();
-            functorBeginBarrier_.wait();
-            td.runStart = sts_clock::now();
-            functor_->run(range);
-            td.runEnd = sts_clock::now();
-            functorEndBarrier_.markArrival();
+            this->run(range, td);
         });
         return lr;
     }
@@ -414,6 +425,7 @@ private:
     std::unique_ptr<ITaskFunctor> functor_;      //!< The function/loop to execute
     MOBarrier functorBeginBarrier_; //!< Many-to-one barrier to sync threads at beginning of loop
     OMBarrier functorEndBarrier_; //!< One-to-many barrier to sync threads at end of loop
+    std::atomic<bool> isCoro_; //!< Whether task is a coroutine (can be paused)
 };
 
 #endif // STS_TASK_H

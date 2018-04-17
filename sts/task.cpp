@@ -1,12 +1,18 @@
 #include "task.h"
 
 bool SubTask::run() {
+    if (!task_->isCoroutine()) {
+        task_->run(range_, timeData_);
+        return true;
+    }
+
     auto runner = task_->getRunner(range_, timeData_);
     runner->wait();
     while (!runner->isFinished()) {
         runner->cont();
         runner->wait();
     }
+    LRPool::gpool.release(runner);
     return true;
 }
 const Task* SubTask::getTask() const {

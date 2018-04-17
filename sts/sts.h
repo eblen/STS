@@ -53,6 +53,8 @@ public:
         for (size_t id = 0; id < numThreads; id++) {
             threads_.emplace_back(id); //create threads
         }
+        // Default core value for threads
+        LRPool::gpool.addCore(-1);
 
         // Create the default STS instance, which uses a default schedule.
         // This schedule provides a quick way to parallelize loops.
@@ -60,6 +62,22 @@ public:
         defaultInstance_->setDefaultSchedule();
         instance_ = defaultInstance_;
     }
+    /*! \brief Whether cores are shared among threads
+     *
+     * \returns whether cores are assumed to be shared
+     */
+    static bool getSharedCores() {return LRPool::gpool.getSharedCores();}
+    /*! \brief Set if cores are shared among threads
+     *
+     * Is true ("assumed") by default but can be turned off at any time to
+     * avoid locks when starting/stopping tasks (checking out lambda runners)
+     *
+     * Dropping the assumption is safe if all threads are set to different cores
+     * with "setCore" before running tasks.
+     *
+     * \param[in] sc  whether cores should be assumed to be shared
+     */
+    static void setSharedCores(bool sc) {LRPool::gpool.setSharedCores(sc);}
     /*! \brief
      * Stops all threads.
      * No STS functions should be called after Shutdown.
@@ -177,6 +195,15 @@ public:
     void setHighPriority(std::string label, Types ... rest) {
         tasks_[getTaskId(label)]->setPriority(Task::HIGH);
         setHighPriority(rest...);
+    }
+    /* \brief
+     * Mark task as a coroutine (runs inside a lambda runner and can be paused)
+     *
+     * \param[in] label  task name
+     */ 
+    void setCoroutine(std::string label) {
+        int tid = getTaskId(label);
+        tasks_[tid]->setCoroutine();
     }
     //! \brief Clear all assignments
     void clearAssignments() {
@@ -574,7 +601,7 @@ private:
      *
      * Undefined behavior if task doesn't exist.
      *
-     * \param[in] task label
+     * \param[in] label  task name
      * \return task id
      */
     int getTaskId(std::string label) const {

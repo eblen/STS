@@ -211,10 +211,9 @@ private:
  */
 class Task {
 public:
-    enum Priority {NORMAL, HIGH};
     Task(std::string l) :reduction_(nullptr), label(l), numThreads_(0),
-                         priority_(NORMAL), functorSetTime_(STS_MAX_TIME_POINT),
-                         functor_(nullptr), isCoro_(false), nextTask_("") {}
+                         functorSetTime_(STS_MAX_TIME_POINT), functor_(nullptr),
+                         isCoro_(false), nextTask_("") {}
     /*! \brief
      * Add a new subtask for this task
      *
@@ -271,14 +270,6 @@ public:
     //! \brief Get task label
     std::string getLabel() const {
         return label;
-    }
-    //! \brief Get task priority
-    Priority getPriority() const {
-        return priority_;
-    }
-    //! \brief Set task priority
-    void setPriority(Priority p) {
-        priority_ = p;
     }
     std::string getNextTask() const {
         return nextTask_;
@@ -433,7 +424,6 @@ private:
     int numThreads_;
     //! Map STS thread id to an id only for this task (task ids are consecutive starting from 0)
     std::map<int, int> threadTaskIds_;
-    Priority priority_;
     time_point<sts_clock> functorSetTime_;
     std::unique_ptr<ITaskFunctor> functor_;      //!< The function/loop to execute
     MOBarrier functorBeginBarrier_; //!< Many-to-one barrier to sync threads at beginning of loop

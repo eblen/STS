@@ -180,22 +180,6 @@ public:
             r += interval;
         }
     }
-    void setNormalPriority(std::string label) {
-        tasks_[getTaskId(label)]->setPriority(Task::NORMAL);
-    }
-    template<typename ... Types>
-    void setNormalPriority(std::string label, Types ... rest) {
-        tasks_[getTaskId(label)]->setPriority(Task::NORMAL);
-        setNormalPriority(rest...);
-    }
-    void setHighPriority(std::string label) {
-        tasks_[getTaskId(label)]->setPriority(Task::HIGH);
-    }
-    template<typename ... Types>
-    void setHighPriority(std::string label, Types ... rest) {
-        tasks_[getTaskId(label)]->setPriority(Task::HIGH);
-        setHighPriority(rest...);
-    }
     /* \brief
      * Mark task as a coroutine (runs inside a lambda runner and can be paused)
      *
@@ -534,25 +518,6 @@ public:
         SubTask* subtask = threadSubTasks_[tid][stid];
         assert(subtask->getTask()->isCoroutine());
         subtask->pause();
-    }
-    /*! \brief
-     * Yield a running task and run the next high priority task
-     */
-    void yield() {
-        int tid = Thread::getId();
-        const std::stack<int>& cstack = threadCallStacks_[Thread::getId()];
-        int stid = 0;
-        if (!cstack.empty()) {
-            stid = cstack.top()+1;
-        }
-        for (; stid < getNumSubTasks(tid); stid++) {
-            SubTask* subtask = threadSubTasks_[tid][stid];
-            // TODO: Decide on the exact policy for what tasks will be considered
-            if (!subtask->isDone() && subtask->getTask()->getPriority() == Task::HIGH) {
-                runSubTask(stid);
-                return;
-            }
-        }
     }
     /*! \brief
      * Print to stdout the current subtask assignments. Useful for diagnostics,

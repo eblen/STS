@@ -6,14 +6,20 @@ bool SubTask::run() {
         return true;
     }
 
-    auto runner = task_->getRunner(range_, timeData_);
-    runner->wait();
-    while (!runner->isFinished()) {
-        runner->cont();
-        runner->wait();
+    if (lr_.get() == nullptr) {
+        lr_ = task_->getRunner(range_, timeData_);
     }
-    LRPool::gpool.release(runner);
-    return true;
+    else {
+        lr_->cont();
+    }
+    lr_->wait();
+
+    bool isDone = lr_->isFinished();
+    if (isDone) {
+        LRPool::gpool.release(lr_);
+    }
+
+    return isDone;
 }
 const Task* SubTask::getTask() const {
     return task_;

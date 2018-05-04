@@ -201,9 +201,10 @@ public:
      *
      * \param[in] label  task name
      */ 
-    void setCoroutine(std::string label) {
+    void setCoroutine(std::string label, std::string nextTask) {
+        assert(isTaskAssigned(label));
         int tid = getTaskId(label);
-        tasks_[tid]->setCoroutine();
+        tasks_[tid]->setCoroutine(nextTask);
     }
     //! \brief Clear all assignments
     void clearAssignments() {
@@ -499,17 +500,14 @@ public:
     void collect(T a) {
         collect(a, getTaskThreadId());
     }
+    /*! \brief
+     * Public interface for threads to launch running of subtasks.
+     * Note that more than one subtask may be run but not necessarily all.
+     *
+     * \return whether subtasks remain to be done.
+     */
     bool runNextSubTask() {
-        int tid = Thread::getId();
-        // Should only be called to start a new call stack
-        assert(threadCallStacks_[tid].empty());
-        for (int stid=0; stid < getNumSubTasks(tid); stid++) {
-            if (!threadSubTasks_[tid][stid]->isDone()) {
-                runSubTask(stid);
-                return true;
-            }
-        }
-        return false;
+        return startNewSubTask();
     }
     /*! \brief
      * Record the current time inside the currently running subtask.
@@ -523,6 +521,19 @@ public:
     void recordTime(std::string label) {
         SubTask* st = getCurrentSubTask();
         st->recordTime(label); 
+    }
+    /*! \brief
+     * Pause the current subtask.
+     * Thread must be running a coroutine subtask.
+     */
+    void pause() {
+        int tid = Thread::getId();
+        const std::stack<int>& cstack = threadCallStacks_[Thread::getId()];
+        assert(!cstack.empty());
+        int stid = cstack.top();
+        SubTask* subtask = threadSubTasks_[tid][stid];
+        assert(subtask->getTask()->isCoroutine());
+        subtask->pause();
     }
     /*! \brief
      * Yield a running task and run the next high priority task
@@ -599,7 +610,7 @@ private:
     /* \brief
      * Get task id for task label
      *
-     * Undefined behavior if task doesn't exist.
+     * Undefined behavior if task doesn't exist (use "isTaskAssigned" to check).
      *
      * \param[in] label  task name
      * \return task id
@@ -653,6 +664,47 @@ private:
         tr->collect(a, ttid);
     }
     /*! \brief
+     * Start a new subtask given the previous subtask (-1 means none).
+     * This function encapsulates the logic for selecting subtasks.
+     *
+     * \param[in] prevST  previous subtask
+     * \return whether all subtasks are done.
+     */
+    bool startNewSubTask(int prevST = -1) {
+        int tid = Thread::getId();
+        // Should only be called if stack is empty or if prior task is a coroutine
+        assert((prevST == -1 && threadCallStacks_[tid].empty()) ||
+               (prevST  > -1 && threadSubTasks_[tid][prevST]->getTask()->isCoroutine()));
+
+        // Nothing currently running (empty stack)
+        if (prevST == -1) {
+            for (int stid=0; stid < getNumSubTasks(tid); stid++) {
+                if (!threadSubTasks_[tid][stid]->isDone()) {
+                    runSubTask(stid);
+                    // Assume that work remains.
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // Coroutine paused
+        else {
+            std::string ntlabel = threadSubTasks_[tid][prevST]->getTask()->getNextTask();
+            for (int stid=0; stid < getNumSubTasks(tid); stid++) {
+                std::string tlabel = threadSubTasks_[tid][stid]->getTask()->getLabel();
+                if (ntlabel == tlabel && (!threadSubTasks_[tid][stid]->isDone())) {
+                        runSubTask(stid);
+                        // Assume that work remains.
+                        // Only run one subtask per pause.
+                        return true;
+                }
+            }
+            // Assume that work remains
+            return true;
+        }
+    }
+    /*! \brief
      * Run the given subtask
      *
      * This function handles the low-level operations of running a subtask.
@@ -665,13 +717,28 @@ private:
         int tid = Thread::getId();
         std::stack<int>& cstack = threadCallStacks_[tid];
         cstack.push(stid);
-        bool isDone = threadSubTasks_[tid][stid]->run();
+        SubTask* st = threadSubTasks_[tid][stid];
+        bool isDone = st->run();
+
+        if (!isDone) {
+            assert(threadSubTasks_[tid][stid]->getTask()->isCoroutine());
+            // Coroutine: Alternate between starting a new task and running our
+            // task until our task finishes (either here or upstream).
+            do {
+                startNewSubTask(stid);
+                isDone = st->isDone();
+                if (!isDone) {
+                    isDone = threadSubTasks_[tid][stid]->run();
+                }
+            } while (!isDone);
+        }
+
         if (stid > 0) {
             threadSubTasks_[tid][stid-1]->setNextRunAvailTime(
             threadSubTasks_[tid][stid]->getTask()->getFunctorSetTime());
         }
         cstack.pop();
-        threadSubTasks_[tid][stid]->setDone(isDone);
+        threadSubTasks_[tid][stid]->setDone(true);
     }
     /*! \brief
      * Run the given loop task inside the currently running task.
@@ -712,6 +779,9 @@ private:
             }
         }
         // Task was not found
+        // TODO: This can happen with coroutines, but only for unusual
+        // schedules. We are assuming that the nested loop will not be completed
+        // (marked as done) before it is found.
         assert(false);
     }
     //! Notify threads to start computing the next step

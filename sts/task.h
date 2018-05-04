@@ -119,11 +119,19 @@ public:
                            this part. Ignored for basic tasks.
      */
     SubTask(int tid, Task *task, Range<Ratio> range) :threadId_(tid),
-    task_(task), range_(range), isDone_(false) {}
+    task_(task), range_(range), lr_(nullptr), isDone_(false) {}
     /*! \brief
      * Run the subtask
+     *
+     * \return whether task completed
      */
     bool run();
+    /*! \brief
+     * Pause the subtask
+     */
+    void pause() {
+        LambdaRunner::instance->pause();
+    }
     const Task *getTask() const;
     bool isDone() const;
     void setDone(bool isDone);
@@ -185,6 +193,7 @@ public:
 private:
     Task *task_;             /**< Reference to main task */
     Range<Ratio> range_;     /**< Range (out of [0,1]) of loop part */
+    std::unique_ptr<LambdaRunner> lr_;
     bool isDone_;
     TaskTimes timeData_;
 };
@@ -205,7 +214,7 @@ public:
     enum Priority {NORMAL, HIGH};
     Task(std::string l) :reduction_(nullptr), label(l), numThreads_(0),
                          priority_(NORMAL), functorSetTime_(STS_MAX_TIME_POINT),
-                         functor_(nullptr), isCoro_(false) {}
+                         functor_(nullptr), isCoro_(false), nextTask_("") {}
     /*! \brief
      * Add a new subtask for this task
      *
@@ -271,8 +280,12 @@ public:
     void setPriority(Priority p) {
         priority_ = p;
     }
-    void setCoroutine() {
+    std::string getNextTask() const {
+        return nextTask_;
+    }
+    void setCoroutine(std::string continuation) {
         isCoro_ = true;
+        nextTask_ = continuation;
     }
     bool isCoroutine() const {
         return isCoro_;
@@ -404,7 +417,6 @@ private:
         functor_.reset(f);
         functorBeginBarrier_.open();
     }
-    std::string label;
     /*! \brief
      * initialize this object for running a new functor. Nullifies any stored
      * functors and resets barriers. Intended only to be called by thread 0
@@ -415,6 +427,7 @@ private:
         functorBeginBarrier_.close();
         functorEndBarrier_.close(this->getNumSubtasks());
     }
+    std::string label;
     //! All subtasks of this task. One for each section of a loop. One for a basic task.
     std::vector<std::unique_ptr<SubTask>> subtasks_; //!< Subtasks to be executed by a single thread
     int numThreads_;
@@ -426,6 +439,7 @@ private:
     MOBarrier functorBeginBarrier_; //!< Many-to-one barrier to sync threads at beginning of loop
     OMBarrier functorEndBarrier_; //!< One-to-many barrier to sync threads at end of loop
     std::atomic<bool> isCoro_; //!< Whether task is a coroutine (can be paused)
+    std::string nextTask_; //!< Task to execute after pausing (only used when isCoro_ is set)
 };
 
 #endif // STS_TASK_H

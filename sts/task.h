@@ -3,6 +3,7 @@
 
 #include <map>
 #include <set>
+#include <string>
 #include <vector>
 #include <memory>
 
@@ -213,7 +214,7 @@ class Task {
 public:
     Task(std::string l) :reduction_(nullptr), label(l), numThreads_(0),
                          functorSetTime_(STS_MAX_TIME_POINT), functor_(nullptr),
-                         isCoro_(false), nextTask_("") {}
+                         isCoro_(false) {}
     /*! \brief
      * Add a new subtask for this task
      *
@@ -271,12 +272,12 @@ public:
     std::string getLabel() const {
         return label;
     }
-    std::string getNextTask() const {
-        return nextTask_;
+    std::set<std::string> getNextTasks() const {
+        return nextTasks_;
     }
-    void setCoroutine(std::string continuation) {
+    void setCoroutine(const std::set<std::string> &continuations) {
         isCoro_ = true;
-        nextTask_ = continuation;
+        nextTasks_ = continuations;
     }
     bool isCoroutine() const {
         return isCoro_;
@@ -429,7 +430,7 @@ private:
     MOBarrier functorBeginBarrier_; //!< Many-to-one barrier to sync threads at beginning of loop
     OMBarrier functorEndBarrier_; //!< One-to-many barrier to sync threads at end of loop
     std::atomic<bool> isCoro_; //!< Whether task is a coroutine (can be paused)
-    std::string nextTask_; //!< Task to execute after pausing (only used when isCoro_ is set)
+    std::set<std::string> nextTasks_; //!< Tasks to execute after pausing (only used when isCoro_ is set)
 };
 
 #endif // STS_TASK_H

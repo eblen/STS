@@ -9,6 +9,7 @@
 #include <map>
 #include <memory>
 #include <stack>
+#include <set>
 #include <string>
 #include <typeindex>
 #include <typeinfo>
@@ -183,12 +184,17 @@ public:
     /* \brief
      * Mark task as a coroutine (runs inside a lambda runner and can be paused)
      *
-     * \param[in] label  task name
+     * \param[in] label      task name
+     * \param[in] nextTasks  set of possible tasks to run on pause
      */ 
-    void setCoroutine(std::string label, std::string nextTask) {
+    void setCoroutine(std::string label, const std::set<std::string> &nextTasks) {
         assert(isTaskAssigned(label));
         int tid = getTaskId(label);
-        tasks_[tid]->setCoroutine(nextTask);
+        tasks_[tid]->setCoroutine(nextTasks);
+    }
+    void setCoroutine(std::string label, std::string nextTask) {
+        std::set<std::string> nextTaskSet {nextTask};
+        setCoroutine(label, nextTaskSet);
     }
     //! \brief Clear all assignments
     void clearAssignments() {
@@ -655,10 +661,11 @@ private:
 
         // Coroutine paused
         else {
-            std::string ntlabel = threadSubTasks_[tid][prevST]->getTask()->getNextTask();
+            const auto &ntlabels = threadSubTasks_[tid][prevST]->getTask()->getNextTasks();
             for (int stid=0; stid < getNumSubTasks(tid); stid++) {
                 std::string tlabel = threadSubTasks_[tid][stid]->getTask()->getLabel();
-                if (ntlabel == tlabel && (!threadSubTasks_[tid][stid]->isDone())) {
+                bool isTarget = ntlabels.find(tlabel) != ntlabels.end();
+                if (isTarget && (!threadSubTasks_[tid][stid]->isDone())) {
                         runSubTask(stid);
                         // Assume that work remains.
                         // Only run one subtask per pause.

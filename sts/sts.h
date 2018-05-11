@@ -665,7 +665,8 @@ private:
             for (int stid=0; stid < getNumSubTasks(tid); stid++) {
                 std::string tlabel = threadSubTasks_[tid][stid]->getTask()->getLabel();
                 bool isTarget = ntlabels.find(tlabel) != ntlabels.end();
-                if (isTarget && (!threadSubTasks_[tid][stid]->isDone())) {
+                const SubTask *st = threadSubTasks_[tid][stid];
+                if (isTarget && (!st->isDone()) && st->isReady()) {
                         runSubTask(stid);
                         // Assume that work remains.
                         // Only run one subtask per pause.

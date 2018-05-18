@@ -497,7 +497,18 @@ public:
      * \return whether subtasks remain to be done.
      */
     bool runNextSubTask() {
-        return startNewSubTask();
+        int tid = Thread::getId();
+        // Should only be called if stack is empty
+        assert(threadCallStacks_[tid].empty());
+
+        for (int stid=0; stid < getNumSubTasks(tid); stid++) {
+            if (!threadSubTasks_[tid][stid]->isDone()) {
+                runSubTask(stid);
+                // Assume that work remains.
+                return true;
+            }
+        }
+        return false;
     }
     /*! \brief
      * Record the current time inside the currently running subtask.
@@ -513,17 +524,39 @@ public:
         st->recordTime(label); 
     }
     /*! \brief
-     * Pause the current subtask.
-     * Thread must be running a coroutine subtask.
+     * Pause the current subtask. Thread must be running a coroutine subtask.
+     * Input parameter can be safely ignored if not using checkpoints.
+     *
+     * \param[in] cp  checkpoint when it is okay to resume task
+     * \return        whether subtask actually paused
      */
-    void pause() {
-        int tid = Thread::getId();
-        const std::stack<int>& cstack = threadCallStacks_[Thread::getId()];
-        assert(!cstack.empty());
-        int stid = cstack.top();
-        SubTask* subtask = threadSubTasks_[tid][stid];
+    bool pause(int cp=0) {
+        SubTask* subtask = getCurrentSubTask();
+        assert(subtask != nullptr);
         assert(subtask->getTask()->isCoroutine());
-        subtask->pause();
+        // Avoid expensive pausing of subtask if no targets are available
+        if (findPauseTarget(subtask) == -1) {
+            return false;
+        }
+        subtask->pause(cp);
+        return true;
+    }
+    /*! \brief
+     * Set checkpoint for the current task, which must be a coroutine.
+     * Note that this sets the checkpoint for the entire task, not the subtask.
+     * Subtask checkpoints are set by passing an argument to pause.
+     *
+     * Should normally only be called by a task's main thread. STS assumes that
+     * checkpoints increase while a task runs and will only resume subtasks with
+     * checkpoint values at or below the task value set here.
+     *
+     * \param[in] cp  checkpoint
+     */
+    void setCheckPoint(int cp) {
+        SubTask* subtask = getCurrentSubTask();
+        assert(subtask != nullptr);
+        assert(subtask->getTask()->isCoroutine());
+        subtask->setCheckPoint(cp);
     }
     /*! \brief
      * Print to stdout the current subtask assignments. Useful for diagnostics,
@@ -635,47 +668,27 @@ private:
         tr->collect(a, ttid);
     }
     /*! \brief
-     * Start a new subtask given the previous subtask (-1 means none).
-     * This function encapsulates the logic for selecting subtasks.
+     * Find another subtask to run on pause of the given coroutine
      *
-     * \param[in] prevST  previous subtask
-     * \return whether all subtasks are done.
+     * \param[in] prevST previous subtask
+     * \return    subtask to run or -1 if none found
      */
-    bool startNewSubTask(int prevST = -1) {
+    int findPauseTarget(const SubTask* prevST) {
         int tid = Thread::getId();
-        // Should only be called if stack is empty or if prior task is a coroutine
-        assert((prevST == -1 && threadCallStacks_[tid].empty()) ||
-               (prevST  > -1 && threadSubTasks_[tid][prevST]->getTask()->isCoroutine()));
+        // Should only be called for a coroutine
+        assert(prevST->getTask()->isCoroutine());
 
-        // Nothing currently running (empty stack)
-        if (prevST == -1) {
-            for (int stid=0; stid < getNumSubTasks(tid); stid++) {
-                if (!threadSubTasks_[tid][stid]->isDone()) {
-                    runSubTask(stid);
-                    // Assume that work remains.
-                    return true;
-                }
+        const auto &ntlabels = prevST->getTask()->getNextTasks();
+        for (int stid=0; stid < getNumSubTasks(tid); stid++) {
+            const SubTask* st = threadSubTasks_[tid][stid];
+            std::string tlabel = st->getTask()->getLabel();
+            bool isTarget = ntlabels.find(tlabel) != ntlabels.end();
+            bool hasReachedCP = st->getCheckPoint() <= st->getTask()->getCheckPoint();
+            if (isTarget && hasReachedCP && (!st->isDone()) && st->isReady()) {
+                return stid;
             }
-            return false;
         }
-
-        // Coroutine paused
-        else {
-            const auto &ntlabels = threadSubTasks_[tid][prevST]->getTask()->getNextTasks();
-            for (int stid=0; stid < getNumSubTasks(tid); stid++) {
-                std::string tlabel = threadSubTasks_[tid][stid]->getTask()->getLabel();
-                bool isTarget = ntlabels.find(tlabel) != ntlabels.end();
-                const SubTask *st = threadSubTasks_[tid][stid];
-                if (isTarget && (!st->isDone()) && st->isReady()) {
-                        runSubTask(stid);
-                        // Assume that work remains.
-                        // Only run one subtask per pause.
-                        return true;
-                }
-            }
-            // Assume that work remains
-            return true;
-        }
+        return -1;
     }
     /*! \brief
      * Run the given subtask
@@ -694,24 +707,29 @@ private:
         bool isDone = st->run();
 
         if (!isDone) {
-            assert(threadSubTasks_[tid][stid]->getTask()->isCoroutine());
-            // Coroutine: Alternate between starting a new task and running our
-            // task until our task finishes (either here or upstream).
+            // Only coroutines should return without completing
+            assert(st->getTask()->isCoroutine());
+            // Coroutine: Alternate between starting a new subtask and running our
+            // subtask until our subtask finishes (either here or upstream).
             do {
-                startNewSubTask(stid);
+                int other_stid = findPauseTarget(st);
+                if (other_stid > -1) {
+                    runSubTask(other_stid);
+                }
+                // Possible that our subtask was completed upstream
                 isDone = st->isDone();
                 if (!isDone) {
-                    isDone = threadSubTasks_[tid][stid]->run();
+                    isDone = st->run();
                 }
             } while (!isDone);
         }
 
         if (stid > 0) {
             threadSubTasks_[tid][stid-1]->setNextRunAvailTime(
-            threadSubTasks_[tid][stid]->getTask()->getFunctorSetTime());
+            st->getTask()->getFunctorSetTime());
         }
         cstack.pop();
-        threadSubTasks_[tid][stid]->setDone(true);
+        st->setDone(true);
     }
     /*! \brief
      * Run the given loop task inside the currently running task.

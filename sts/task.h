@@ -120,7 +120,15 @@ public:
                            this part. Ignored for basic tasks.
      */
     SubTask(int tid, Task *task, Range<Ratio> range) :threadId_(tid),
-    task_(task), range_(range), lr_(nullptr), isDone_(false) {}
+    task_(task), range_(range), lr_(nullptr), isDone_(false), checkPoint_(0) {}
+    /*! \brief
+     * Reset the subtask for another run
+     */
+    void reset() {
+        isDone_ = false;
+        checkPoint_ = 0;
+        timeData_.clear();
+    }
     /*! \brief
      * Run the subtask
      *
@@ -129,13 +137,27 @@ public:
     bool run();
     /*! \brief
      * Pause the subtask
+     * Input parameter can be safely ignored if not using checkpoints.
+     *
+     * \param[in] cp  checkpoint when it is okay to resume task.
      */
-    void pause() {
+    void pause(int cp=0) {
+        checkPoint_ = cp;
         LambdaRunner::instance->pause();
+    }
+    int getCheckPoint() const {
+        return checkPoint_;
     }
     const Task *getTask() const;
     bool isDone() const;
     void setDone(bool isDone);
+    /*! \brief
+     * Set checkpoint for containing Task (not SubTask)
+     * This function exists because Tasks are not directly accessible by STS.
+     *
+     * \param[in] cp  checkpoint
+     */
+    void setCheckPoint(int cp);
     bool isReady() const;
     long getWaitStartTime() const {
         auto s = time_point_cast<microseconds>(timeData_.waitStart);
@@ -181,9 +203,6 @@ public:
         }
         return times;
     }
-    void clearTimes() {
-        timeData_.clear();
-    }
     Range<Ratio> getRange() const {
         return range_;
     }
@@ -197,6 +216,14 @@ private:
     std::unique_ptr<LambdaRunner> lr_;
     bool isDone_;
     TaskTimes timeData_;
+    // Check point when subtask should be resumed. Resets to zero at the
+    // beginning of each step. This can be used, along with the Task class
+    // checkpoints, to avoid resuming a coroutine until a certain event
+    // completes, such as a lengthy communication. STS will not resume the
+    // subtask on a pause until the main task has reached the set checkpoint.
+    // Thus, the application does not need extra logic to avoid pausing too
+    // early or too often (as long as STS no-op pauses are fast).
+    int checkPoint_;
 };
 
 /*! \internal \brief
@@ -214,7 +241,7 @@ class Task {
 public:
     Task(std::string l) :reduction_(nullptr), label(l), numThreads_(0),
                          functorSetTime_(STS_MAX_TIME_POINT), functor_(nullptr),
-                         isCoro_(false) {}
+                         isCoro_(false), checkPoint_(0) {}
     /*! \brief
      * Add a new subtask for this task
      *
@@ -263,8 +290,7 @@ public:
      */
     void restart() {
         for (std::unique_ptr<SubTask> &st : subtasks_) {
-            st->setDone(false);
-            st->clearTimes();
+            st->reset();
         }
         init();
     }
@@ -324,6 +350,17 @@ public:
             assert(intervals[i] <= intervals[i+1]);
             subtasks_[i]->setRange({intervals[i],intervals[i+1]});
         }
+    }
+    /*! \brief
+     * Set task checkpoint
+     *
+     * \param[in] cp  checkpoint
+     */
+    void setCheckPoint(int cp) {
+        checkPoint_ = cp;
+    }
+    int getCheckPoint() const {
+        return checkPoint_;
     }
     /*! \brief
      * Set the functor (work) to be done.
@@ -418,6 +455,7 @@ private:
         functor_.reset(nullptr);
         functorBeginBarrier_.close();
         functorEndBarrier_.close(this->getNumSubtasks());
+        checkPoint_ = 0;
     }
     std::string label;
     //! All subtasks of this task. One for each section of a loop. One for a basic task.
@@ -431,6 +469,10 @@ private:
     OMBarrier functorEndBarrier_; //!< One-to-many barrier to sync threads at end of loop
     std::atomic<bool> isCoro_; //!< Whether task is a coroutine (can be paused)
     std::set<std::string> nextTasks_; //!< Tasks to execute after pausing (only used when isCoro_ is set)
+
+    // checkPoint_ should normally only be written by the main thread (using checkpoint() method)
+    // Resets to zero at beginning of each step.
+    std::atomic<int> checkPoint_; //!< Allow marking of task checkpoints
 };
 
 #endif // STS_TASK_H

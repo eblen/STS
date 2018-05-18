@@ -30,6 +30,9 @@ bool SubTask::isDone() const {
 void SubTask::setDone(bool isDone) {
     isDone_ = isDone;
 }
+void SubTask::setCheckPoint(int cp) {
+    task_->setCheckPoint(cp);
+}
 bool SubTask::isReady() const {
     return task_->isReady();
 }

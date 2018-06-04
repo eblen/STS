@@ -95,8 +95,8 @@ int main(int argc, char **argv)
   sts->assign_run("TASK_G", 1);
   sts->assign_loop("TASK_F_0", bothThreads);
 
-  sts->setCoroutine("TASK_G", "TASK_F_0");
-  sts->setCoroutine("TASK_F_0", "TASK_G");
+  sts->setCoroutine("TASK_G", bothThreads, "TASK_F_0");
+  sts->setCoroutine("TASK_F_0", bothThreads, "TASK_G");
 
   for (int step=0; step<nsteps; step++) {
       sts->nextStep();

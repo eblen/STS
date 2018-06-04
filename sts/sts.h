@@ -187,14 +187,16 @@ public:
      * \param[in] label      task name
      * \param[in] nextTasks  set of possible tasks to run on pause
      */ 
-    void setCoroutine(std::string label, const std::set<std::string> &nextTasks) {
+    void setCoroutine(std::string label, const std::vector<int> &threadIds,
+    const std::set<std::string> &nextTasks) {
         assert(isTaskAssigned(label));
         int tid = getTaskId(label);
-        tasks_[tid]->setCoroutine(nextTasks);
+        tasks_[tid]->setCoroutine(threadIds, nextTasks);
     }
-    void setCoroutine(std::string label, std::string nextTask) {
+    void setCoroutine(std::string label, const std::vector<int> &threadIds,
+    std::string nextTask) {
         std::set<std::string> nextTaskSet {nextTask};
-        setCoroutine(label, nextTaskSet);
+        setCoroutine(label, threadIds, nextTaskSet);
     }
     //! \brief Clear all assignments
     void clearAssignments() {
@@ -533,7 +535,7 @@ public:
     bool pause(int cp=0) {
         SubTask* subtask = getCurrentSubTask();
         assert(subtask != nullptr);
-        assert(subtask->getTask()->isCoroutine());
+        assert(subtask->getTask()->isCoroutine(Thread::getId()));
         // Avoid expensive pausing of subtask if no targets are available
         if (findPauseTarget(subtask) == -1) {
             return false;
@@ -555,7 +557,7 @@ public:
     void setCheckPoint(int cp) {
         SubTask* subtask = getCurrentSubTask();
         assert(subtask != nullptr);
-        assert(subtask->getTask()->isCoroutine());
+        assert(subtask->getTask()->isCoroutine(Thread::getId()));
         subtask->setCheckPoint(cp);
     }
     /*! \brief
@@ -676,7 +678,7 @@ private:
     int findPauseTarget(const SubTask* prevST) {
         int tid = Thread::getId();
         // Should only be called for a coroutine
-        assert(prevST->getTask()->isCoroutine());
+        assert(prevST->getTask()->isCoroutine(tid));
 
         const auto &ntlabels = prevST->getTask()->getNextTasks();
         for (int stid=0; stid < getNumSubTasks(tid); stid++) {
@@ -708,7 +710,7 @@ private:
 
         if (!isDone) {
             // Only coroutines should return without completing
-            assert(st->getTask()->isCoroutine());
+            assert(st->getTask()->isCoroutine(tid));
             // Coroutine: Alternate between starting a new subtask and running our
             // subtask until our subtask finishes (either here or upstream).
             do {

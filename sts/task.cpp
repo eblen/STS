@@ -1,7 +1,7 @@
 #include "task.h"
 
 bool SubTask::run() {
-    if (!task_->isCoroutine()) {
+    if (!task_->isCoroutine(Thread::getId())) {
         task_->run(range_, timeData_);
         return true;
     }

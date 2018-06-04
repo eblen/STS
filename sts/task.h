@@ -241,7 +241,7 @@ class Task {
 public:
     Task(std::string l) :reduction_(nullptr), label(l), numThreads_(0),
                          functorSetTime_(STS_MAX_TIME_POINT), functor_(nullptr),
-                         isCoro_(false), checkPoint_(0) {}
+                         checkPoint_(0) {}
     /*! \brief
      * Add a new subtask for this task
      *
@@ -301,12 +301,17 @@ public:
     std::set<std::string> getNextTasks() const {
         return nextTasks_;
     }
-    void setCoroutine(const std::set<std::string> &continuations) {
-        isCoro_ = true;
+    void setCoroutine(const std::vector<int>& threads,
+    const std::set<std::string> &continuations) {
+        for (int t : threads) {
+            assert(t > -1);
+            runAsCoroutine_.insert(t);
+        }
         nextTasks_ = continuations;
     }
-    bool isCoroutine() const {
-        return isCoro_;
+    bool isCoroutine(int tid) const {
+        assert(tid > -1);
+        return runAsCoroutine_.find(tid) != runAsCoroutine_.end();
     }
     //! \brief Get reduction function
     void* getReduction() const {
@@ -461,14 +466,18 @@ private:
     //! All subtasks of this task. One for each section of a loop. One for a basic task.
     std::vector<std::unique_ptr<SubTask>> subtasks_; //!< Subtasks to be executed by a single thread
     int numThreads_;
+    // TODO: Consider whether threadTaskIds_ and runAsCoroutine_ should be in a mutex. Technically, a
+    // race conditions is possible but should never happen in practice. Writing should only occur by
+    // the main thread before task is executed, after which only reading should occur.
     //! Map STS thread id to an id only for this task (task ids are consecutive starting from 0)
-    std::map<int, int> threadTaskIds_;
+    std::map<int, int>  threadTaskIds_;
+    //! STS thread ids that should run as a coroutine (note: contains STS, non-local ids)
+    std::set<int> runAsCoroutine_;
     time_point<sts_clock> functorSetTime_;
     std::unique_ptr<ITaskFunctor> functor_;      //!< The function/loop to execute
     MOBarrier functorBeginBarrier_; //!< Many-to-one barrier to sync threads at beginning of loop
     OMBarrier functorEndBarrier_; //!< One-to-many barrier to sync threads at end of loop
-    std::atomic<bool> isCoro_; //!< Whether task is a coroutine (can be paused)
-    std::set<std::string> nextTasks_; //!< Tasks to execute after pausing (only used when isCoro_ is set)
+    std::set<std::string> nextTasks_; //!< Tasks to execute after pausing (only relevant when ran as coroutine)
 
     // checkPoint_ should normally only be written by the main thread (using checkpoint() method)
     // Resets to zero at beginning of each step.

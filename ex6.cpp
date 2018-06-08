@@ -10,7 +10,7 @@
 
 const int nsteps = 1;
 const int nthreads = 2;
-const int niters = 1000000;
+const int niters = 5000000;
 
 static float fresult = 0;
 static float gresult = 0;
@@ -18,8 +18,7 @@ STS *sts;
 
 // Fake communication function
 void comm() {
-    std::this_thread::sleep_for(std::chrono::seconds(1));
-    // sleep(5);
+    std::this_thread::sleep_for(std::chrono::seconds(2));
 }
 
 void task_f() {

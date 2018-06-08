@@ -101,6 +101,7 @@ public:
         int n = getNumThreads();
         assert(n > 0);
         threadSubTasks_.resize(n);
+        nextSubTasks_.resize(n);
         threadCallStacks_.resize(n);
         if (!id.empty()) {
             stsInstances_[id] = this;
@@ -202,6 +203,9 @@ public:
     void clearAssignments() {
         for (auto &taskList : threadSubTasks_) {
             taskList.clear();
+        }
+        for (auto &nst : nextSubTasks_) {
+            nst.clear();
         }
         for (std::unique_ptr<Task> &task : tasks_) {
             task->clearSubtasks();
@@ -533,13 +537,13 @@ public:
      * \return        whether subtask actually paused
      */
     bool pause(int cp=0) {
-        SubTask* subtask = getCurrentSubTask();
-        assert(subtask != nullptr);
-        assert(subtask->getTask()->isCoroutine(Thread::getId()));
+        int st = getCurrentSubTaskId();
+        assert(st != -1);
         // Avoid expensive pausing of subtask if no targets are available
-        if (findPauseTarget(subtask) == -1) {
+        if (findPauseTarget(st) == -1) {
             return false;
         }
+        SubTask* subtask = getCurrentSubTask();
         subtask->pause(cp);
         return true;
     }
@@ -591,13 +595,23 @@ public:
         return nullptr;
     }
 private:
-    SubTask* getCurrentSubTask() const {
+    int getCurrentSubTaskId() const {
         int tid = Thread::getId();
         if (threadCallStacks_[tid].empty()) {
-            return nullptr;
+            return -1;
         }
         else {
             int stid = threadCallStacks_[tid].top();
+            return stid;
+        }
+    }
+    SubTask* getCurrentSubTask() const {
+        int stid = getCurrentSubTaskId();
+        if (stid == -1) {
+            return nullptr;
+        }
+        else {
+            int tid = Thread::getId();
             return threadSubTasks_[tid][stid];
         }
     }
@@ -672,21 +686,15 @@ private:
     /*! \brief
      * Find another subtask to run on pause of the given coroutine
      *
-     * \param[in] prevST previous subtask
+     * \param[in] st subtask (must be coroutine)
      * \return    subtask to run or -1 if none found
      */
-    int findPauseTarget(const SubTask* prevST) {
+    int findPauseTarget(int st) {
         int tid = Thread::getId();
-        // Should only be called for a coroutine
-        assert(prevST->getTask()->isCoroutine(tid));
-
-        const auto &ntlabels = prevST->getTask()->getNextTasks();
-        for (int stid=0; stid < getNumSubTasks(tid); stid++) {
+        for (int stid : nextSubTasks_[tid][st]) {
             const SubTask* st = threadSubTasks_[tid][stid];
-            std::string tlabel = st->getTask()->getLabel();
-            bool isTarget = ntlabels.find(tlabel) != ntlabels.end();
             bool hasReachedCP = st->getCheckPoint() <= st->getTask()->getCheckPoint();
-            if (isTarget && hasReachedCP && (!st->isDone()) && st->isReady()) {
+            if (hasReachedCP && (!st->isDone()) && st->isReady()) {
                 return stid;
             }
         }
@@ -714,7 +722,7 @@ private:
             // Coroutine: Alternate between starting a new subtask and running our
             // subtask until our subtask finishes (either here or upstream).
             do {
-                int other_stid = findPauseTarget(st);
+                int other_stid = findPauseTarget(stid);
                 if (other_stid > -1) {
                     runSubTask(other_stid);
                 }
@@ -786,6 +794,28 @@ private:
             assert(instance_ == this);
             return;
         }
+
+        // Create lists of targets for coroutines for faster "pause" processing
+        for (int tid=0; tid<getNumThreads(); tid++) {
+            int nSubTasks = getNumSubTasks(tid);
+            nextSubTasks_[tid].resize(nSubTasks);
+            for (int stid=0; stid<nSubTasks; stid++) {
+                const SubTask* st = threadSubTasks_[tid][stid];
+                if (!st->getTask()->isCoroutine(tid)) {
+                    continue;
+                }
+                const auto &ntlabels = st->getTask()->getNextTasks();
+                for (int stid2=0; stid2<nSubTasks; stid2++) {
+                    const SubTask* st2 = threadSubTasks_[tid][stid2];
+                    std::string tlabel = st2->getTask()->getLabel();
+                    bool isTarget = ntlabels.find(tlabel) != ntlabels.end();
+                    if (isTarget) {
+                        nextSubTasks_[tid][stid].push_back(stid2);
+                    }
+                }
+            }
+        }
+
         // Cannot swap out an active schedule (call wait first)
         assert(instance_->isActive_ == false);
         instance_ = this;
@@ -823,6 +853,7 @@ private:
     std::vector<std::unique_ptr<Task>>  tasks_;
     std::map<std::string,int> taskLabels_;
     std::vector< std::vector<SubTask *> > threadSubTasks_;
+    std::vector< std::vector< std::vector<int> > > nextSubTasks_;
     // Call stack of running subtasks for each thread
     std::vector<std::stack<int>> threadCallStacks_;
     bool bUseDefaultSchedule_;

@@ -298,7 +298,7 @@ public:
     std::string getLabel() const {
         return label;
     }
-    std::set<std::string> getNextTasks() const {
+    const std::set<std::string>& getNextTasks() const {
         return nextTasks_;
     }
     void setCoroutine(const std::vector<int>& threads,

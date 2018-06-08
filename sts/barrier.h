@@ -60,7 +60,21 @@ T wait_until_not(const std::atomic<T> &a, std::nullptr_t) {
  */
 class MOBarrier {
 public:
-    MOBarrier() :isLocked(true) {}
+    /*! \brief
+     * Constructs a new many-to-one barrier.
+     *
+     * \param[in] name  Barrier name
+     */
+    MOBarrier(std::string name = "") :id(name), isLocked(true) {
+        if (!id.empty()) {
+            barrierInstances_[id] = this;
+        }
+    }
+    ~MOBarrier() {
+        if (!id.empty()) {
+            barrierInstances_.erase(id);
+        }
+    }
     /*! \brief
      * Wait on barrier. Should be called by "M" threads
      */
@@ -79,8 +93,25 @@ public:
      * Reset barrier
      */
     void close() {isLocked.store(true);}
+    /*! \brief
+     * Returns MOBarrier instance for a given id or nullptr if not found
+     *
+     * \param[in] id  MOBarrier instance id
+     * \returns MOBarrier instance
+     */
+    static MOBarrier *getInstance(std::string id) {
+        auto entry = barrierInstances_.find(id);
+        if (entry == barrierInstances_.end()) {
+            return nullptr;
+        }
+        else {
+            return entry->second;
+        }
+    }
 private:
+    std::string id;
     std::atomic<bool> isLocked;
+    static std::map<std::string, MOBarrier *> barrierInstances_;
 };
 
 /*! \internal \brief
@@ -88,7 +119,21 @@ private:
  */
 class OMBarrier {
 public:
-    OMBarrier() :numThreadsRemaining(0) {}
+    /*! \brief
+     * Constructs a new one-to-many barrier.
+     *
+     * \param[in] name  Barrier name
+     */
+    OMBarrier(std::string name = "") :id(name), numThreadsRemaining(0) {
+        if (!id.empty()) {
+            barrierInstances_[id] = this;
+        }
+    }
+    ~OMBarrier() {
+        if (!id.empty()) {
+            barrierInstances_.erase(id);
+        }
+    }
     /*! \brief
      * Register with the barrier. Should be called by "M" threads.
      */
@@ -107,9 +152,26 @@ public:
     void close(int nthreads) {
         numThreadsRemaining.store(nthreads);
     }
+    /*! \brief
+     * Returns OMBarrier instance for a given id or nullptr if not found
+     *
+     * \param[in] id  OMBarrier instance id
+     * \returns OMBarrier instance
+     */
+    static OMBarrier *getInstance(std::string id) {
+        auto entry = barrierInstances_.find(id);
+        if (entry == barrierInstances_.end()) {
+            return nullptr;
+        }
+        else {
+            return entry->second;
+        }
+    }
 
 private:
+    std::string id;
     std::atomic<int> numThreadsRemaining;
+    static std::map<std::string, OMBarrier *> barrierInstances_;
 };
 
 /*! \internal \brief
@@ -132,6 +194,11 @@ public:
         assert(nt > 0);
         if (!id.empty()) {
             barrierInstances_[id] = this;
+        }
+    }
+    ~MMBarrier() {
+        if (!id.empty()) {
+            barrierInstances_.erase(id);
         }
     }
     //! \brief Enter barrier
@@ -170,8 +237,8 @@ public:
 private:
     std::string id;
     const int nthreads;
-    std::atomic<int>  numWaitingThreads;
-    std::atomic<int>  numReleasedThreads;
+    std::atomic<int> numWaitingThreads;
+    std::atomic<int> numReleasedThreads;
     static std::map<std::string, MMBarrier *> barrierInstances_;
 };
 

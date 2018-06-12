@@ -5,6 +5,7 @@
 
 #include <map>
 #include <string>
+#include <vector>
 
 #include <atomic>
 
@@ -51,6 +52,17 @@ T wait_until_not(const std::atomic<T> &a, std::nullptr_t) {
         v2 = a.load();
     } while(v2 == nullptr);
     return v2;
+}
+
+/*! \brief
+ * Wait until atomic variable a is >= value v
+ *
+ * \param[in] a   atomic variable
+ * \param[in] v   value
+ */
+template <typename T>
+void wait_until_ge(const std::atomic<T> &a, T v) {
+    while (a.load() < v);
 }
 
 // TODO: Asserts to check for wrong or multiple uses of barriers.
@@ -112,6 +124,70 @@ private:
     std::string id;
     std::atomic<bool> isLocked;
     static std::map<std::string, MOBarrier *> barrierInstances_;
+};
+
+/*! \internal \brief
+ * A reusable many-to-one (RMO) barrier.
+ * Barrier is "reusable" in that it does not need to be reset between uses,
+ * which can be difficult to do correctly inside a loop.
+ */
+class RMOBarrier {
+public:
+    /*! \brief
+     * Constructs a new reusable many-to-one barrier.
+     * Note that constructor allocates "maxThreadId" slots, so the maximum
+     * allowable id should be kept small.
+     *
+     * \param[in] maxThreadId  maximum thread id passed to "wait"
+     * \param[in] name         Barrier name
+     */
+    RMOBarrier(int maxThreadId, std::string name = "") :id(name),
+    locksOpened_(0), lockNum_(maxThreadId+1, 0) {
+        if (!id.empty()) {
+            barrierInstances_[id] = this;
+        }
+    }
+    ~RMOBarrier() {
+        if (!id.empty()) {
+            barrierInstances_.erase(id);
+        }
+    }
+    /*! \brief
+     * Wait on barrier. Should be called by "M" threads
+     *
+     * \param[in] tid  thread id
+     */
+    void wait(int tid) {
+        assert(tid < lockNum_.size());
+        lockNum_[tid]++;
+        wait_until_ge(locksOpened_, lockNum_[tid]);
+    }
+    /*! \brief
+     * Open barrier. Should be called by "O" thread.
+     */
+    void open() {
+        locksOpened_++;
+    }
+    /*! \brief
+     * Returns RMOBarrier instance for a given id or nullptr if not found
+     *
+     * \param[in] id  RMOBarrier instance id
+     * \returns RMOBarrier instance
+     */
+    static RMOBarrier *getInstance(std::string id) {
+        auto entry = barrierInstances_.find(id);
+        if (entry == barrierInstances_.end()) {
+            return nullptr;
+        }
+        else {
+            return entry->second;
+        }
+    }
+private:
+    std::string id;
+    std::atomic<int> locksOpened_;
+    std::vector<int> lockNum_;
+    static std::map<std::string, RMOBarrier *> barrierInstances_;
 };
 
 /*! \internal \brief

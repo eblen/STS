@@ -33,6 +33,9 @@ void SubTask::setDone(bool isDone) {
 void SubTask::setCheckPoint(int cp) {
     task_->setCheckPoint(cp);
 }
+void SubTask::waitForCheckPoint() const {
+    task_->waitForCheckPoint(checkPoint_);
+}
 bool SubTask::isReady() const {
     return task_->isReady();
 }

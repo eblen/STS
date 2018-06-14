@@ -189,7 +189,7 @@ public:
      * \param[in] nextTasks  set of possible tasks to run on pause
      */ 
     void setCoroutine(std::string label, const std::vector<int> &threadIds,
-    const std::set<std::string> &nextTasks) {
+    const std::set<std::string> &nextTasks = {}) {
         assert(isTaskAssigned(label));
         int tid = getTaskId(label);
         tasks_[tid]->setCoroutine(threadIds, nextTasks);
@@ -538,14 +538,19 @@ public:
      */
     bool pause(int cp=0) {
         int st = getCurrentSubTaskId();
+        SubTask* subtask = getCurrentSubTask();
         assert(st != -1);
-        // Avoid expensive pausing of subtask if no targets are available
-        if (findPauseTarget(st) == -1) {
+        // To support fast polling, duplicate some checks in "runSubTask" to
+        // try and avoid pausing.
+        bool haveTarget = findPauseTarget(st) > -1;
+        bool cpReached  = cp <= subtask->getTask()->getCheckPoint();
+        if (haveTarget || !cpReached) {
+            subtask->pause(cp);
+            return true;
+        }
+        else {
             return false;
         }
-        SubTask* subtask = getCurrentSubTask();
-        subtask->pause(cp);
-        return true;
     }
     /*! \brief
      * Set checkpoint for the current task, which must be a coroutine.
@@ -706,6 +711,8 @@ private:
      * This function handles the low-level operations of running a subtask.
      * This includes bookkeeping, setting flags, and launching the run.
      * Callers are responsible for selecting a suitable subtask to run.
+     * This function will run the subtask, even if it hasn't reached a
+     * checkpoint yet. It will spin-wait until the checkpoint is reached.
      *
      * \param[in] stid  Id of the subtask to run
      */
@@ -714,32 +721,33 @@ private:
         std::stack<int>& cstack = threadCallStacks_[tid];
         cstack.push(stid);
         SubTask* st = threadSubTasks_[tid][stid];
-        bool isDone = st->run();
+        assert(st->isDone() == false);
 
-        if (!isDone) {
-            // Only coroutines should return without completing
-            assert(st->getTask()->isCoroutine(tid));
-            // Coroutine: Alternate between starting a new subtask and running our
-            // subtask until our subtask finishes (either here or upstream).
-            do {
+        st->waitForCheckPoint();
+
+        bool isDone = false;
+        bool hasReachedCP = true;
+        do {
+            isDone = st->run();
+
+            // Pivot to another subtask if available (coroutines only)
+            if (!isDone) {
+                assert(st->getTask()->isCoroutine(tid));
                 int other_stid = findPauseTarget(stid);
                 if (other_stid > -1) {
                     runSubTask(other_stid);
                 }
-                // Possible that our subtask was completed upstream
-                isDone = st->isDone();
-                if (!isDone) {
-                    isDone = st->run();
-                }
-            } while (!isDone);
-        }
+            }
 
-        if (stid > 0) {
+            hasReachedCP = st->getCheckPoint() <= st->getTask()->getCheckPoint();
+        } while(!isDone && hasReachedCP);
+
+        if (isDone && stid > 0) {
             threadSubTasks_[tid][stid-1]->setNextRunAvailTime(
             st->getTask()->getFunctorSetTime());
         }
         cstack.pop();
-        st->setDone(true);
+        st->setDone(isDone);
     }
     /*! \brief
      * Run the given loop task inside the currently running task.
@@ -805,7 +813,8 @@ private:
                     continue;
                 }
                 const auto &ntlabels = st->getTask()->getNextTasks();
-                for (int stid2=0; stid2<nSubTasks; stid2++) {
+                // Only later tasks are allowed to be targets
+                for (int stid2=stid+1; stid2<nSubTasks; stid2++) {
                     const SubTask* st2 = threadSubTasks_[tid][stid2];
                     std::string tlabel = st2->getTask()->getLabel();
                     bool isTarget = ntlabels.find(tlabel) != ntlabels.end();

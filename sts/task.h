@@ -153,11 +153,17 @@ public:
     void setDone(bool isDone);
     /*! \brief
      * Set checkpoint for containing Task (not SubTask)
-     * This function exists because Tasks are not directly accessible by STS.
+     * This function exists because Tasks cannot be modified directly.
      *
      * \param[in] cp  checkpoint
      */
     void setCheckPoint(int cp);
+    /*! \brief
+     * Wait for checkpoint to be reached
+     * This function exists for convenience (calls Task version of this
+     * function with the correct cp value)
+     */
+    void waitForCheckPoint() const;
     bool isReady() const;
     long getWaitStartTime() const {
         auto s = time_point_cast<microseconds>(timeData_.waitStart);
@@ -366,6 +372,16 @@ public:
     }
     int getCheckPoint() const {
         return checkPoint_;
+    }
+    /*! \brief
+     * Wait for task to reach the given checkpoint
+     *
+     * \param[in] cp  checkpoint
+     */
+    void waitForCheckPoint(int cp) const {
+        if (checkPoint_ < cp) {
+            wait_until_ge(checkPoint_,cp);
+        }
     }
     /*! \brief
      * Set the functor (work) to be done.

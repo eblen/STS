@@ -103,6 +103,7 @@ public:
         threadSubTasks_.resize(n);
         nextSubTasks_.resize(n);
         threadCallStacks_.resize(n);
+        systemProgressed_.resize(n, false);
         if (!id.empty()) {
             stsInstances_[id] = this;
         }
@@ -251,6 +252,7 @@ public:
             function();
         } else {
             tasks_[getTaskId(label)]->setFunctor(createBasicTaskFunctor(function));
+            markStateChange();
         }
     }
     //! Notify threads to start computing the next step
@@ -302,6 +304,7 @@ public:
         // Must be a loop task
         task->setReduction(red);
         task->setFunctor(createLoopTaskFunctor(body, {start, end}));
+        markStateChange();
         runNestedLoop(task);
         if (red != nullptr) {
             red->reduce();
@@ -326,6 +329,7 @@ public:
             Task* task = tasks_[taskId].get();
             assert(task != nullptr);
             task->setFunctor(createBasicTaskFunctor( []{} ));
+            markStateChange();
         }
     }
     /*! \brief
@@ -342,6 +346,7 @@ public:
             assert(task != nullptr);
             // Return i to avoid compiler warnings about an unused parameter
             task->setFunctor(createLoopTaskFunctor( [](int i){return i;}, {0,1} ));
+            markStateChange();
         }
     }
     //! Automatically compute new schedule based on previous step timing
@@ -537,6 +542,15 @@ public:
      * \return        whether subtask actually paused
      */
     bool pause(int cp=0) {
+        // Support fast polling - return immediately if nothing has changed
+        // (no new tasks available or checkpoints reached)
+        // Only works if cp=0. For polling, no argument should be passed.
+        // Otherwise, it is possible that subtask must pause.
+        int tid = Thread::getId();
+        if (cp == 0 && !systemProgressed_[tid]) {
+            return false;
+        }
+        systemProgressed_[tid] = false;
         int st = getCurrentSubTaskId();
         SubTask* subtask = getCurrentSubTask();
         assert(st != -1);
@@ -568,6 +582,7 @@ public:
         assert(subtask != nullptr);
         assert(subtask->getTask()->isCoroutine(Thread::getId()));
         subtask->setCheckPoint(cp);
+        markStateChange();
     }
     /*! \brief
      * Print to stdout the current subtask assignments. Useful for diagnostics,
@@ -666,6 +681,16 @@ private:
             tasks_.emplace_back(std::unique_ptr<Task>(new Task(label)));
             taskLabels_[label] = v;
             return v;
+        }
+    }
+    /* \brief
+     * Mark that task state has changed. Should be called anytime a checkpoint
+     * is reached or a task becomes available to run. Exists to support fast
+     * polling.
+     */
+    void markStateChange() {
+        for (int t=0; t<getNumThreads(); t++) {
+            systemProgressed_[t] = true;
         }
     }
     /* \brief
@@ -868,6 +893,8 @@ private:
     bool bUseDefaultSchedule_;
     // "Active" means schedule is between nextStep and wait calls.
     bool isActive_;
+    // Whether system progressed (task advanced) - supports fast polling
+    std::vector<bool> systemProgressed_;
     // Cannot be a vector because Task moving is not allowed (occurs on resizing)
     static std::deque<Thread> threads_;
     static std::atomic<int> stepCounter_;

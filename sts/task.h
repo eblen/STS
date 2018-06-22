@@ -87,14 +87,14 @@ class Task;
 struct TaskTimes {
 public:
     time_point<sts_clock> waitStart;    // Time when work requested
-    time_point<sts_clock> runStart;     // Time when work started
-    time_point<sts_clock> runEnd;       // Time when work finished
+    std::vector< time_point<sts_clock> > runStart; // Times when work started
+    std::vector< time_point<sts_clock> > runEnd;   // Times when work finished
     time_point<sts_clock> nextRunAvail; // Time when next run (subtask) was ready
     std::map< std::string, std::vector<time_point<sts_clock>> > auxTimes;
     void clear() {
         waitStart    = STS_MAX_TIME_POINT;
-        runStart     = STS_MAX_TIME_POINT;
-        runEnd       = STS_MAX_TIME_POINT;
+        runStart.clear();
+        runEnd.clear();
         nextRunAvail = STS_MAX_TIME_POINT;
         auxTimes.clear();
     }
@@ -169,13 +169,21 @@ public:
         auto s = time_point_cast<microseconds>(timeData_.waitStart);
         return s.time_since_epoch().count();
     }
-    long getRunStartTime() const {
-        auto s = time_point_cast<microseconds>(timeData_.runStart);
-        return s.time_since_epoch().count();
+    const std::vector<long> getRunStartTimes() const {
+        std::vector<long> times;
+        for (auto t : timeData_.runStart) {
+            auto ms = time_point_cast<microseconds>(t);
+            times.push_back(ms.time_since_epoch().count());
+        }
+        return times;
     }
-    long getRunEndTime() const {
-        auto s = time_point_cast<microseconds>(timeData_.runEnd);
-        return s.time_since_epoch().count();
+    const std::vector<long> getRunEndTimes() const {
+        std::vector<long> times;
+        for (auto t : timeData_.runEnd) {
+            auto ms = time_point_cast<microseconds>(t);
+            times.push_back(ms.time_since_epoch().count());
+        }
+        return times;
     }
     long getNextRunAvailTime() const {
         auto s = time_point_cast<microseconds>(timeData_.nextRunAvail);
@@ -188,15 +196,6 @@ public:
      */
     void setNextRunAvailTime(long t) {
        timeData_.nextRunAvail = time_point<sts_clock>(microseconds(t));
-    }
-    long getWaitDuration() const {
-        return getRunStartTime() - getWaitStartTime();
-    }
-    long getRunDuration() const {
-        return getRunEndTime() - getRunStartTime();
-    }
-    long getTotalDuration() const {
-        return getRunEndTime() - getWaitStartTime();
     }
     void recordTime(std::string label) {
         timeData_.auxTimes[label].push_back(sts_clock::now());
@@ -230,6 +229,8 @@ private:
     // Thus, the application does not need extra logic to avoid pausing too
     // early or too often (as long as STS no-op pauses are fast).
     int checkPoint_;
+    // Record times when run starts, pauses, and finishes
+    std::vector< time_point<sts_clock> > times_;
 };
 
 /*! \internal \brief
@@ -410,9 +411,9 @@ public:
     void run(Range<Ratio> range, TaskTimes &td) {
         td.waitStart = sts_clock::now();
         functorBeginBarrier_.wait();
-        td.runStart = sts_clock::now();
+        td.runStart.push_back(sts_clock::now());
         functor_->run(range);
-        td.runEnd = sts_clock::now();
+        td.runEnd.push_back(sts_clock::now());
         functorEndBarrier_.markArrival();
     }
     // TODO: Comments out-of-date! Combine with "run" above.

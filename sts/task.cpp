@@ -10,6 +10,9 @@ bool SubTask::run() {
         lr_ = task_->getRunner(range_, timeData_);
     }
     else {
+        // Runner stores start and finish times but not intermediate pauses
+        // and restarts.
+        timeData_.runStart.push_back(sts_clock::now());
         lr_->cont();
     }
     lr_->wait();
@@ -17,6 +20,9 @@ bool SubTask::run() {
     bool isDone = lr_->isFinished();
     if (isDone) {
         LRPool::gpool.release(lr_);
+    }
+    else {
+        timeData_.runEnd.push_back(sts_clock::now());
     }
 
     return isDone;

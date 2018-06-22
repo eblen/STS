@@ -600,6 +600,27 @@ public:
            }
        } 
     }
+    /*! \brief
+     * Print to stdout the start, pause, and stop times of subtasks. Useful for
+     * diagnostics, debugging, and making charts and graphs.
+     */
+    void printSubTaskTimes() {
+       for (int t=0; t<getNumThreads(); t++) {
+           std::cout << "Thread " << t << std::endl;
+           for (int s=0; s<getNumSubTasks(t); s++) {
+               SubTask* subtask = threadSubTasks_[t][s];
+               std::cout << subtask->getTask()->getLabel();
+
+               std::vector<long> startTimes = subtask->getRunStartTimes();
+               std::vector<long> endTimes =   subtask->getRunEndTimes();
+               assert(startTimes.size() == endTimes.size());
+               for (size_t r=0; r<startTimes.size(); r++) {
+                   std::cout << " " << startTimes[r] << " " << endTimes[r];
+               }
+               std::cout << std::endl;
+           }
+       } 
+    }
     const SubTask* getSubTask(int threadId, int subTaskId) const {
         return threadSubTasks_[threadId][subTaskId];
     }

@@ -103,7 +103,9 @@ public:
         threadSubTasks_.resize(n);
         nextSubTasks_.resize(n);
         threadCallStacks_.resize(n);
-        systemProgressed_.resize(n, false);
+        for (int i=0; i<n; i++) {
+            systemProgressed_[i] = 0;
+        }
         if (!id.empty()) {
             stsInstances_[id] = this;
         }
@@ -547,10 +549,10 @@ public:
         // Only works if cp=0. For polling, no argument should be passed.
         // Otherwise, it is possible that subtask must pause.
         int tid = Thread::getId();
-        if (cp == 0 && !systemProgressed_[tid]) {
+        if (cp == 0 && systemProgressed_[tid] == 0) {
             return false;
         }
-        systemProgressed_[tid] = false;
+        systemProgressed_[tid] = std::max(0,systemProgressed_[tid].load()-1);
         int st = getCurrentSubTaskId();
         SubTask* subtask = getCurrentSubTask();
         assert(st != -1);
@@ -580,7 +582,6 @@ public:
     void setCheckPoint(int cp) {
         SubTask* subtask = getCurrentSubTask();
         assert(subtask != nullptr);
-        assert(subtask->getTask()->isCoroutine(Thread::getId()));
         subtask->setCheckPoint(cp);
         markStateChange();
     }
@@ -690,7 +691,7 @@ private:
      */
     void markStateChange() {
         for (int t=0; t<getNumThreads(); t++) {
-            systemProgressed_[t] = true;
+            systemProgressed_[t]++;
         }
     }
     /* \brief
@@ -860,6 +861,12 @@ private:
 
         // Increment counter only
         stepCounter_.fetch_add(1, std::memory_order_release);
+
+        // Counts may be > 0 after previous step, effectively disabling
+        // the fast polling mechanism.
+        for (int i=0; i<getNumThreads(); i++) {
+            systemProgressed_[i] = 0;
+        }
     }
     //! Wait on all tasks to finish
     void waitInternal() {
@@ -894,7 +901,8 @@ private:
     // "Active" means schedule is between nextStep and wait calls.
     bool isActive_;
     // Whether system progressed (task advanced) - supports fast polling
-    std::vector<bool> systemProgressed_;
+    // Use map because other containers require copy and assignment for atomics
+    std::map<int, std::atomic<int> > systemProgressed_;
     // Cannot be a vector because Task moving is not allowed (occurs on resizing)
     static std::deque<Thread> threads_;
     static std::atomic<int> stepCounter_;

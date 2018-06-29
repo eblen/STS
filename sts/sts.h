@@ -569,6 +569,35 @@ public:
         }
     }
     /*! \brief
+     * Wait for all targets to complete.
+     *
+     * This would typically be called at the end of a task to make sure that
+     * all targeted tasks were completed. This can enforce an ordering of task
+     * to avoid deadlock situations.
+     */
+    void waitForAllTargets() {
+        int tid   = Thread::getId();
+        int stid  = getCurrentSubTaskId();
+        SubTask* subtask = getCurrentSubTask();
+
+        std::vector<const SubTask*> targets;
+        for (int targetId : nextSubTasks_[tid][stid]) {
+            targets.push_back(threadSubTasks_[tid][targetId]);
+        }
+
+        bool allDone = false;
+        while (!allDone) {
+            allDone = true;
+            for (const SubTask* t : targets) {
+                if (!t->isDone()) {
+                    allDone = false;
+                    subtask->pause();
+                    break;
+                }
+            }
+        }
+    }
+    /*! \brief
      * Set checkpoint for the current task, which must be a coroutine.
      * Note that this sets the checkpoint for the entire task, not the subtask.
      * Subtask checkpoints are set by passing an argument to pause.

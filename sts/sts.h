@@ -537,7 +537,7 @@ public:
         st->recordTime(label); 
     }
     /*! \brief
-     * Pause the current subtask. Thread must be running a coroutine subtask.
+     * Pause the current subtask. Does nothing if task is not a coroutine.
      * Input parameter can be safely ignored if not using checkpoints.
      *
      * \param[in] cp  checkpoint when it is okay to resume task
@@ -553,9 +553,14 @@ public:
             return false;
         }
         systemProgressed_[tid] = std::max(0,systemProgressed_[tid].load()-1);
-        int st = getCurrentSubTaskId();
+
         SubTask* subtask = getCurrentSubTask();
+        if (!subtask->getTask()->isCoroutine(tid)) {
+            return false;
+        }
+        int st = getCurrentSubTaskId();
         assert(st != -1);
+
         // To support fast polling, duplicate some checks in "runSubTask" to
         // try and avoid pausing.
         bool haveTarget = findPauseTarget(st) > -1;

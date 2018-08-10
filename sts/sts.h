@@ -4,6 +4,7 @@
 #include <cassert>
 
 #include <algorithm>
+#include <bitset>
 #include <deque>
 #include <iostream>
 #include <map>
@@ -23,6 +24,9 @@
 #include "reduce.h"
 #include "task.h"
 #include "thread.h"
+
+static const int MAX_SUBTASKS = 32;
+static const int MAX_THREADS  =  8;
 
 /*! \internal \brief
  * Static Thread Scheduler
@@ -101,7 +105,6 @@ public:
         int n = getNumThreads();
         assert(n > 0);
         threadSubTasks_.resize(n);
-        nextSubTasks_.resize(n);
         threadCallStacks_.resize(n);
         for (int i=0; i<n; i++) {
             systemProgressed_[i] = 0;
@@ -206,9 +209,6 @@ public:
     void clearAssignments() {
         for (auto &taskList : threadSubTasks_) {
             taskList.clear();
-        }
-        for (auto &nst : nextSubTasks_) {
-            nst.clear();
         }
         for (std::unique_ptr<Task> &task : tasks_) {
             task->clearSubtasks();
@@ -558,11 +558,11 @@ public:
         if (!subtask->getTask()->isCoroutine(tid)) {
             return false;
         }
-        int st = getCurrentSubTaskId();
-        assert(st != -1);
 
         // To support fast polling, duplicate some checks in "runSubTask" to
         // try and avoid pausing.
+        int st = getCurrentSubTaskId();
+        assert(st != -1);
         bool haveTarget = findPauseTarget(st) > -1;
         bool cpReached  = cp <= subtask->getTask()->getCheckPoint();
         if (haveTarget || !cpReached) {
@@ -581,15 +581,19 @@ public:
      * to avoid deadlock situations.
      */
     void waitForAllTargets() {
-        int tid   = Thread::getId();
-        int stid  = getCurrentSubTaskId();
-        SubTask* subtask = getCurrentSubTask();
+        int tid    = Thread::getId();
+        int stid   = getCurrentSubTaskId();
+        int numSTs = getNumSubTasks(tid);
 
+        const std::bitset<MAX_SUBTASKS>& t = nextSubTasks_[tid][stid];
         std::vector<const SubTask*> targets;
-        for (int targetId : nextSubTasks_[tid][stid]) {
-            targets.push_back(threadSubTasks_[tid][targetId]);
+        for (int i=0; i<numSTs; i++) {
+            if (t.test(i)) {
+                targets.push_back(threadSubTasks_[tid][i]);
+            }
         }
 
+        SubTask* subtask = getCurrentSubTask();
         bool allDone = false;
         while (!allDone) {
             allDone = true;
@@ -777,11 +781,18 @@ private:
      */
     int findPauseTarget(int st) {
         int tid = Thread::getId();
-        for (int stid : nextSubTasks_[tid][st]) {
-            const SubTask* st = threadSubTasks_[tid][stid];
-            bool hasReachedCP = st->getCheckPoint() <= st->getTask()->getCheckPoint();
-            if (hasReachedCP && (!st->isDone()) && st->isReady()) {
-                return stid;
+        std::bitset<MAX_SUBTASKS> targets = nextSubTasks_[tid][st];
+        for (int stidx=st+1; stidx<MAX_SUBTASKS; stidx++) {
+            if (targets.test(stidx)) {
+                targets.reset(stidx);
+                const SubTask* st = threadSubTasks_[tid][stidx];
+                bool hasReachedCP = st->getCheckPoint() <= st->getTask()->getCheckPoint();
+                if (hasReachedCP && (!st->isDone()) && st->isReady()) {
+                    return stidx;
+                }
+            }
+            if (!targets.any()) {
+                break;
             }
         }
         return -1;
@@ -887,7 +898,6 @@ private:
         // Create lists of targets for coroutines for faster "pause" processing
         for (int tid=0; tid<getNumThreads(); tid++) {
             int nSubTasks = getNumSubTasks(tid);
-            nextSubTasks_[tid].resize(nSubTasks);
             for (int stid=0; stid<nSubTasks; stid++) {
                 const SubTask* st = threadSubTasks_[tid][stid];
                 if (!st->getTask()->isCoroutine(tid)) {
@@ -900,7 +910,7 @@ private:
                     std::string tlabel = st2->getTask()->getLabel();
                     bool isTarget = ntlabels.find(tlabel) != ntlabels.end();
                     if (isTarget) {
-                        nextSubTasks_[tid][stid].push_back(stid2);
+                        nextSubTasks_[tid][stid].set(stid2);
                     }
                 }
             }
@@ -949,7 +959,7 @@ private:
     std::vector<std::unique_ptr<Task>>  tasks_;
     std::map<std::string,int> taskLabels_;
     std::vector< std::vector<SubTask *> > threadSubTasks_;
-    std::vector< std::vector< std::vector<int> > > nextSubTasks_;
+    std::bitset<MAX_SUBTASKS> nextSubTasks_[MAX_THREADS][MAX_SUBTASKS];
     // Call stack of running subtasks for each thread
     std::vector<std::stack<int>> threadCallStacks_;
     bool bUseDefaultSchedule_;

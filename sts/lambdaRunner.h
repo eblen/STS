@@ -102,7 +102,7 @@ private:
     std::function<void()> lambda_;
 
     // Synchronization Primitives
-    bool isRunning_;
+    std::atomic<bool> isRunning_;
     std::condition_variable cv_;
     std::mutex mut_;
 };

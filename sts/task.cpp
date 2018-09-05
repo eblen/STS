@@ -2,12 +2,12 @@
 
 bool SubTask::run() {
     if (!task_->isCoroutine(Thread::getId())) {
-        task_->run(range_, timeData_);
+        task_->run(range_, runInfo_, timeData_);
         return true;
     }
 
     if (lr_.get() == nullptr) {
-        lr_ = task_->getRunner(range_, timeData_);
+        lr_ = task_->getRunner(range_, runInfo_, timeData_);
     }
     else {
         // Runner stores start and finish times but not intermediate pauses
@@ -27,7 +27,7 @@ bool SubTask::run() {
 
     return isDone;
 }
-const Task* SubTask::getTask() const {
+Task* SubTask::getTask() const {
     return task_;
 }
 bool SubTask::isDone() const {

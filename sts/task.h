@@ -19,6 +19,12 @@ using namespace std::chrono;
 using sts_clock = steady_clock;
 static const auto STS_MAX_TIME_POINT = time_point<sts_clock>::max();
 
+struct taskRunInfo {
+    int64_t startIter;
+    int64_t endIter;
+    int64_t currentIter;
+};
+
 //! \internal Interface of the executable function of a task
 class ITaskFunctor {
 public:
@@ -26,8 +32,10 @@ public:
      * Run the function of the task
      *
      * \param[in] range  range of task to be executed. Ignored for basic task.
+     * \param[in] ri     structure for functor to share run information with caller.
      */
-    virtual void run(Range<Ratio> range) = 0;
+    virtual void run(Range<int64_t> range, taskRunInfo &ri) = 0;
+    virtual void run(Range<Ratio>   range, taskRunInfo &ri) = 0;
     virtual ~ITaskFunctor() {};
 };
 
@@ -42,11 +50,34 @@ public:
      * \param[in] r    range of loop
      */
     LoopTaskFunctor<F>(F f, Range<int64_t> r): body_(f), range_(r) {}
-    void run(Range<Ratio> r) {
-        Range<int64_t> s = range_.subset(r); //compute sub-range of this execution
-        for (int i=s.start; i<s.end; i++) {
-            body_(i);
+    /*! \brief
+     * Run a task multiple times for a range of indices
+     *
+     * Note that run info serves as a communication channel, in both directions,
+     * between the functor and the caller. Both currentIter and endIter may be
+     * changed during the loop to support work splitting.
+     *
+     * Warning: Concurrency is not yet a problem, because changes to run info
+     * during the run can only occur from the same thread that is running the
+     * functor. Running subtasks can only be changed by their own thread.
+     * Concurrency will be a problem if this ever changes.
+     *
+     * \param[in] r    range of loop
+     * \param[in] ri   run information
+     */
+    void run(Range<int64_t> r, taskRunInfo &ri) {
+        int64_t &s = ri.startIter;
+        int64_t &e = ri.endIter;
+        int64_t &c = ri.currentIter;
+        s = r.start;
+        e = r.end;
+        for (c=s; c<e; c++) {
+            body_(c);
         }
+    }
+    void run(Range<Ratio> r, taskRunInfo &ri) {
+        Range<int64_t> s = range_.subset(r); //compute sub-range of this execution
+        run(s, ri);
     }
 private:
     F body_;
@@ -69,8 +100,14 @@ public:
      * \param[in] f    lambda of function
      */
     BasicTaskFunctor<F>(F f) : func_(f) {};
-    void run(Range<Ratio>) {
+    void run(Range<int64_t>, taskRunInfo &ri) {
+        ri.startIter   = 0;
+        ri.endIter     = 1;
+        ri.currentIter = 0;
         func_();
+    }
+    void run(Range<Ratio>, taskRunInfo &ri) {
+        run(Range<int64_t>({0,1}), ri);
     }
 private:
     F func_;
@@ -148,7 +185,7 @@ public:
     int getCheckPoint() const {
         return checkPoint_;
     }
-    const Task *getTask() const;
+    Task *getTask() const;
     bool isDone() const;
     void setDone(bool isDone);
     /*! \brief
@@ -214,9 +251,16 @@ public:
     void setRange(Range<Ratio> r) {
         range_ = r;
     }
+    taskRunInfo getRunInfo() const {
+        return runInfo_;
+    }
+    void setEndIter(int64_t i) {
+        runInfo_.endIter = i;
+    }
     const int threadId_;
 private:
     Task *task_;             /**< Reference to main task */
+    taskRunInfo runInfo_; /**< Info reported during run */
     Range<Ratio> range_;     /**< Range (out of [0,1]) of loop part */
     std::unique_ptr<LambdaRunner> lr_;
     bool isDone_;
@@ -408,13 +452,32 @@ public:
     bool isReady() const {
         return functorBeginBarrier_.isOpen();
     }
-    void run(Range<Ratio> range, TaskTimes &td) {
+    // Two run functions should be identical except for type of first argument
+    void run(Range<Ratio> range, taskRunInfo &ri, TaskTimes &td) {
         td.waitStart = sts_clock::now();
         functorBeginBarrier_.wait();
         td.runStart.push_back(sts_clock::now());
-        functor_->run(range);
+        functor_->run(range, ri);
         td.runEnd.push_back(sts_clock::now());
         functorEndBarrier_.markArrival();
+    }
+    void run(Range<int64_t> range, taskRunInfo &ri, TaskTimes &td) {
+        td.waitStart = sts_clock::now();
+        functorBeginBarrier_.wait();
+        td.runStart.push_back(sts_clock::now());
+        functor_->run(range, ri);
+        td.runEnd.push_back(sts_clock::now());
+        functorEndBarrier_.markArrival();
+    }
+    /*
+     * Notify task that we've added another thread that will run part of the
+     * task (supports work splitting).
+     *
+     * This function must be called whenever a new thread is added that will
+     * call "run," so that main thread knows how many threads to wait for.
+     */
+    void addThread() {
+        functorEndBarrier_.addThread();
     }
     // TODO: Comments out-of-date! Combine with "run" above.
     /*! \brief
@@ -427,14 +490,14 @@ public:
      * \return whether all functors have been assigned for this task, which
      *         is always true for a BasicTask after running its single task.
      */
-    std::unique_ptr<LambdaRunner> getRunner(Range<Ratio> range, TaskTimes &td) {
+    std::unique_ptr<LambdaRunner> getRunner(Range<Ratio> range, taskRunInfo &ri, TaskTimes &td) {
         int tid = Thread::getId();
         std::unique_ptr<LambdaRunner> lr = LRPool::gpool.get(Thread::getCore());
         lr->run([&,range,tid] {
             // Make sure subtasks run with the same thread id. Otherwise, calls
             // to STS inside lambda will access the wrong data structures.
             Thread::setId(tid);
-            this->run(range, td);
+            this->run(range, ri, td);
         });
         return lr;
     }

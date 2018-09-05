@@ -504,24 +504,19 @@ public:
         collect(a, getTaskThreadId());
     }
     /*! \brief
-     * Public interface for threads to launch running of subtasks.
-     * Note that more than one subtask may be run but not necessarily all.
-     *
-     * \return whether subtasks remain to be done.
+     * Entrance point to run all assigned subtasks for the current step.
      */
-    bool runNextSubTask() {
+    void runAllSubTasks() {
         int tid = Thread::getId();
-        // Should only be called if stack is empty
         assert(threadCallStacks_[tid].empty());
 
         for (int stid=0; stid < getNumSubTasks(tid); stid++) {
+            // Must check if done because subtasks can be called and completed
+            // by earlier subtasks.
             if (!threadSubTasks_[tid][stid]->isDone()) {
                 runSubTask(stid);
-                // Assume that work remains.
-                return true;
             }
         }
-        return false;
     }
     /*! \brief
      * Record the current time inside the currently running subtask.
@@ -805,6 +800,8 @@ private:
      * Callers are responsible for selecting a suitable subtask to run.
      * This function will run the subtask, even if it hasn't reached a
      * checkpoint yet. It will spin-wait until the checkpoint is reached.
+     *
+     * Function does not return until subtask is finished.
      *
      * \param[in] stid  Id of the subtask to run
      */

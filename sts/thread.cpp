@@ -17,5 +17,5 @@ void Thread::doWork() {
 
 void Thread::processQueue() {
     STS* sts = STS::getCurrentInstance();
-    while(sts->runNextSubTask());
+    sts->runAllSubTasks();
 }

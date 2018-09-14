@@ -172,7 +172,7 @@ public:
      * \param[in] threadId Id of thread assigned the work
      * \param[in] range    range of loop executed by this thread
      */
-    void assign_loop(std::string label, int threadId, const Range<Ratio> range) {
+    void assign_loop(std::string label, int threadId, const Range<Ratio> range = {0,1}) {
         assign(label, threadId, range);
     }
     /*! \brief
@@ -736,6 +736,15 @@ public:
         }
         return nullptr;
     }
+    const Task* getCurrentTask() const {
+        SubTask* st  = getCurrentSubTask();
+        if (st == nullptr) {
+            return nullptr;
+        }
+        else {
+            return st->getTask();
+        }
+    }
 private:
     int getCurrentSubTaskId() const {
         int tid = Thread::getId();
@@ -755,15 +764,6 @@ private:
         else {
             int tid = Thread::getId();
             return threadSubTasks_[tid][stid];
-        }
-    }
-    const Task* getCurrentTask() const {
-        SubTask* st  = getCurrentSubTask();
-        if (st == nullptr) {
-            return nullptr;
-        }
-        else {
-            return st->getTask();
         }
     }
     bool isTaskAssigned(std::string label) const {

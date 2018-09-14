@@ -171,7 +171,7 @@ public:
      * \param[in] tid  thread id
      */
     void wait(int tid) {
-        assert(tid < lockNum_.size());
+        assert(tid >= 0 && (unsigned int)(tid) < lockNum_.size());
         lockNum_[tid]++;
         wait_until_ge(locksOpened_, lockNum_[tid]);
     }

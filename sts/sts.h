@@ -536,7 +536,9 @@ public:
             }
 
             // Do extra work
+            idleStateMutex_.lock();
             TaskPortion &tp = extraWork_[tid].back();
+            idleStateMutex_.unlock();
             tp.t->run(tp.r, tp.ri, tp.tt);
         }
     }
@@ -565,12 +567,15 @@ public:
     bool pause(int cp=0) {
         // Split work if other threads are idle
         if (numIdleThreads_ > 0) {
+            idleStateMutex_.lock();
             SubTask* st = getCurrentSubTask();
             // subtask is null for "extra work" assigned to an idle thread
             // outside of a normal subtask.
             if (st == nullptr) {
                 return false;
             }
+            // Note search for idle thread could fail because threads may enter
+            // mutex before numIdleThreads_ is decremented.
             for (int t=0; t<getNumThreads(); t++) {
                 if (isThreadIdle_[t]) {
                     // Create work for thread
@@ -587,13 +592,12 @@ public:
                     st->getTask()->addThread();
 
                     // Wakeup idle thread
-                    idleStateMutex_.lock();
                     numIdleThreads_--;
                     isThreadIdle_[t] = false;
-                    idleStateMutex_.unlock();
                     break;
                 }
             }
+            idleStateMutex_.unlock();
         }
 
         // Support fast polling - return immediately if nothing has changed
@@ -1037,8 +1041,8 @@ private:
     std::map<int, std::atomic<int> > systemProgressed_;
 
     // Variables for recording thread idle state
-    std::atomic<int> numIdleThreads_;
     std::mutex idleStateMutex_;
+    std::atomic<int> numIdleThreads_;
     // Use map because other containers require copy and assignment for atomics
     std::map<int, std::atomic<bool>> isThreadIdle_;
 

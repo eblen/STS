@@ -102,7 +102,7 @@ public:
      * \param[in] name  optional name for schedule
      */
     STS(std::string name = "") :id(name), bUseDefaultSchedule_(false),
-        isActive_(false), numIdleThreads_(0) {
+        isActive_(false), numIdleThreads_(0), splitRatio(0.05) {
         int n = getNumThreads();
         assert(n > 0);
         threadSubTasks_.resize(n);
@@ -584,7 +584,7 @@ public:
                     if (ei-ci < 2) {
                         continue;
                     }
-                    int64_t half = ci + (ei-ci)/2;
+                    int64_t half = ci + (ei-ci)*(1.0 - splitRatio);
                     extraWork_[t].push_back(TaskPortion(st->getTask(), {half, ei}));
 
                     // Modify current subtask and task
@@ -748,6 +748,10 @@ public:
         else {
             return st->getTask();
         }
+    }
+    void setSplitRatio(double sr) {
+        assert(sr >= 0.0 && sr <= 1.0);
+        splitRatio = sr;
     }
 private:
     int getCurrentSubTaskId() const {
@@ -1055,7 +1059,8 @@ private:
         TaskPortion(Task* t_, Range<int64_t> r_): t(t_), r(r_) {}
     };
     std::vector<std::vector<TaskPortion>> extraWork_;
-
+    // Amount of remaining work to reassign when work splitting. Default is 0.05
+    double splitRatio;
     // Cannot be a vector because Task moving is not allowed (occurs on resizing)
     static std::deque<Thread> threads_;
     static std::atomic<int> stepCounter_;

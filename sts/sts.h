@@ -468,6 +468,11 @@ public:
         tasks_[id]->setSubTaskRanges(intervals);
 
     }
+    void enableTaskAutoBalancing(std::string label) {
+        assert(isTaskAssigned(label));
+        int id = getTaskId(label);
+        tasks_[id]->enableAutoBalancing();
+    }
     /*! \brief
      * Load atomic step counter
      *
@@ -1054,9 +1059,9 @@ private:
     struct TaskPortion {
         Task* t;
         Range<int64_t> r;
-        taskRunInfo ri;
+        SubTaskRunInfo ri;
         TaskTimes tt;
-        TaskPortion(Task* t_, Range<int64_t> r_): t(t_), r(r_) {}
+        TaskPortion(Task* t_, Range<int64_t> r_): t(t_), r(r_), ri(t_) {}
     };
     std::vector<std::vector<TaskPortion>> extraWork_;
     // Amount of remaining work to reassign when work splitting. Default is 0.05

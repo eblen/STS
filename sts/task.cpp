@@ -1,13 +1,26 @@
 #include "task.h"
+ 
+SubTaskRunInfo::SubTaskRunInfo(Task* t) :isRunning(false), startIter(0),
+endIter(0), currentIter(0), mutex(t->getAutoBalancingMutex()) {}
 
-bool SubTask::run() {
+bool SubTask::runImpl() {
     if (!task_->isCoroutine(Thread::getId())) {
-        task_->run(range_, runInfo_, timeData_);
+        if (doingExtraWork_) {
+            task_->run(workingRange_, runInfo_, timeData_);
+        }
+        else {
+            task_->run(range_, runInfo_, timeData_);
+        }
         return true;
     }
 
     if (lr_.get() == nullptr) {
-        lr_ = task_->getRunner(range_, runInfo_, timeData_);
+        if (doingExtraWork_) {
+            lr_ = task_->getRunner(workingRange_, runInfo_, timeData_);
+        }
+        else {
+            lr_ = task_->getRunner(range_, runInfo_, timeData_);
+        }
     }
     else {
         // Runner stores start and finish times but not intermediate pauses
@@ -27,6 +40,28 @@ bool SubTask::run() {
 
     return isDone;
 }
+
+bool SubTask::run() {
+    while(true) {
+        bool done = runImpl();
+        // Only attempt to steal work when subtask completes current work
+        if (!done) {
+            return false;
+        }
+        else {
+            if (task_->stealWork(*this)) {
+                // Only true until stealing fails
+                doingExtraWork_ = true;
+            }
+            else {
+                // Must reset flag for next step
+                doingExtraWork_ = false;
+                return true;
+            }
+        }
+    }
+}
+
 Task* SubTask::getTask() const {
     return task_;
 }

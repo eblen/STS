@@ -19,10 +19,20 @@ using namespace std::chrono;
 using sts_clock = steady_clock;
 static const auto STS_MAX_TIME_POINT = time_point<sts_clock>::max();
 
-struct taskRunInfo {
+class Task;
+
+/*! \brief
+ * Class to store the state of a running subtask.
+ * Specifically, store the start, end, and current iteration values of a loop
+ * task, which can change concurrently if load balancing is being done.
+ */
+struct SubTaskRunInfo {
+    bool isRunning;
     int64_t startIter;
     int64_t endIter;
     int64_t currentIter;
+    std::mutex &mutex;
+    SubTaskRunInfo(Task* t);
 };
 
 //! \internal Interface of the executable function of a task
@@ -34,8 +44,8 @@ public:
      * \param[in] range  range of task to be executed. Ignored for basic task.
      * \param[in] ri     structure for functor to share run information with caller.
      */
-    virtual void run(Range<int64_t> range, taskRunInfo &ri) = 0;
-    virtual void run(Range<Ratio>   range, taskRunInfo &ri) = 0;
+    virtual void run(Range<int64_t> range, SubTaskRunInfo &ri) = 0;
+    virtual void run(Range<Ratio>   range, SubTaskRunInfo &ri) = 0;
     virtual ~ITaskFunctor() {};
 };
 
@@ -53,29 +63,36 @@ public:
     /*! \brief
      * Run a task multiple times for a range of indices
      *
-     * Note that run info serves as a communication channel, in both directions,
-     * between the functor and the caller. Both currentIter and endIter may be
-     * changed during the loop to support work splitting.
-     *
-     * Warning: Concurrency is not yet a problem, because changes to run info
-     * during the run can only occur from the same thread that is running the
-     * functor. Running subtasks can only be changed by their own thread.
-     * Concurrency will be a problem if this ever changes.
+     * Note that run information can be concurrently altered, because iteration
+     * values may be changed to support various load balancing strategies.
      *
      * \param[in] r    range of loop
      * \param[in] ri   run information
      */
-    void run(Range<int64_t> r, taskRunInfo &ri) {
-        int64_t &s = ri.startIter;
-        int64_t &e = ri.endIter;
-        int64_t &c = ri.currentIter;
-        s = r.start;
-        e = r.end;
-        for (c=s; c<e; c++) {
-            body_(c);
+    void run(Range<int64_t> r, SubTaskRunInfo &ri) {
+        int64_t ci;
+        bool finished = false;
+
+        ri.mutex.lock();
+        ri.startIter   = r.start;
+        ri.currentIter = r.start;
+        ci             = r.start;
+        ri.endIter     = r.end;
+        ri.isRunning   = ci < ri.endIter;
+        finished       = !ri.isRunning;
+        ri.mutex.unlock();
+
+        while (!finished) {
+            body_(ci);
+            ri.mutex.lock();
+            ri.currentIter++;
+            ci = ri.currentIter;
+            ri.isRunning = ci < ri.endIter;
+            finished = !ri.isRunning;
+            ri.mutex.unlock();
         }
     }
-    void run(Range<Ratio> r, taskRunInfo &ri) {
+    void run(Range<Ratio> r, SubTaskRunInfo &ri) {
         Range<int64_t> s = range_.subset(r); //compute sub-range of this execution
         run(s, ri);
     }
@@ -100,13 +117,18 @@ public:
      * \param[in] f    lambda of function
      */
     BasicTaskFunctor<F>(F f) : func_(f) {};
-    void run(Range<int64_t>, taskRunInfo &ri) {
+    void run(Range<int64_t>, SubTaskRunInfo &ri) {
+        ri.mutex.lock();
         ri.startIter   = 0;
         ri.endIter     = 1;
         ri.currentIter = 0;
+        ri.mutex.unlock();
         func_();
+        ri.mutex.lock();
+        ri.currentIter = 1;
+        ri.mutex.unlock();
     }
-    void run(Range<Ratio>, taskRunInfo &ri) {
+    void run(Range<Ratio>, SubTaskRunInfo &ri) {
         run(Range<int64_t>({0,1}), ri);
     }
 private:
@@ -118,8 +140,6 @@ template<typename F>
 BasicTaskFunctor<F>* createBasicTaskFunctor(F f) {
     return new BasicTaskFunctor<F>(f);
 }
-
-class Task;
 
 struct TaskTimes {
 public:
@@ -157,7 +177,8 @@ public:
                            this part. Ignored for basic tasks.
      */
     SubTask(int tid, Task *task, Range<Ratio> range) :threadId_(tid),
-    task_(task), range_(range), lr_(nullptr), isDone_(false), checkPoint_(0) {}
+    task_(task), runInfo_(task), range_(range), lr_(nullptr), isDone_(false),
+    checkPoint_(0), doingExtraWork_(false) {}
     /*! \brief
      * Reset the subtask for another run
      */
@@ -251,7 +272,10 @@ public:
     void setRange(Range<Ratio> r) {
         range_ = r;
     }
-    taskRunInfo getRunInfo() const {
+    void setWorkingRange(Range<int64_t> r) {
+        workingRange_ = r;
+    }
+    SubTaskRunInfo getRunInfo() const {
         return runInfo_;
     }
     void setEndIter(int64_t i) {
@@ -259,9 +283,14 @@ public:
     }
     const int threadId_;
 private:
+    bool runImpl();
     Task *task_;             /**< Reference to main task */
-    taskRunInfo runInfo_; /**< Info reported during run */
+    SubTaskRunInfo runInfo_; /**< Info reported during run */
     Range<Ratio> range_;     /**< Range (out of [0,1]) of loop part */
+    // Working range. Can change during step and used to store additional
+    // ranges found from work stealing while auto balancing. Stores actual
+    // iteration values rather than ratios.
+    Range<int64_t> workingRange_;
     std::unique_ptr<LambdaRunner> lr_;
     bool isDone_;
     TaskTimes timeData_;
@@ -275,6 +304,8 @@ private:
     int checkPoint_;
     // Record times when run starts, pauses, and finishes
     std::vector< time_point<sts_clock> > times_;
+    // Keep track of when extra work is being done instead of the assigned work (used for auto balancing).
+    bool doingExtraWork_;
 };
 
 /*! \internal \brief
@@ -292,7 +323,7 @@ class Task {
 public:
     Task(std::string l) :reduction_(nullptr), label(l), numThreads_(0),
                          functorSetTime_(STS_MAX_TIME_POINT), functor_(nullptr),
-                         checkPoint_(0) {}
+                         checkPoint_(0), autoBalancing_(false) {}
     /*! \brief
      * Add a new subtask for this task
      *
@@ -385,13 +416,6 @@ public:
         }
         return nullptr;
     }
-    std::vector<const SubTask*> getSubTasks() const {
-        std::vector<const SubTask*> v;
-        for (auto const& st : subtasks_) {
-            v.push_back(st.get());
-        }
-        return v;
-    }
     /*! \brief
      * Set ranges for the subtasks of a task
      *
@@ -406,6 +430,12 @@ public:
             assert(intervals[i] <= intervals[i+1]);
             subtasks_[i]->setRange({intervals[i],intervals[i+1]});
         }
+    }
+    void enableAutoBalancing() {
+        autoBalancing_ = true;
+    }
+    std::mutex& getAutoBalancingMutex() {
+        return autoBalancingMutex_;
     }
     /*! \brief
      * Set task checkpoint
@@ -453,7 +483,7 @@ public:
         return functorBeginBarrier_.isOpen();
     }
     // Two run functions should be identical except for type of first argument
-    void run(Range<Ratio> range, taskRunInfo &ri, TaskTimes &td) {
+    void run(Range<Ratio> range, SubTaskRunInfo &ri, TaskTimes &td) {
         td.waitStart = sts_clock::now();
         functorBeginBarrier_.wait();
         td.runStart.push_back(sts_clock::now());
@@ -461,7 +491,7 @@ public:
         td.runEnd.push_back(sts_clock::now());
         functorEndBarrier_.markArrival();
     }
-    void run(Range<int64_t> range, taskRunInfo &ri, TaskTimes &td) {
+    void run(Range<int64_t> range, SubTaskRunInfo &ri, TaskTimes &td) {
         td.waitStart = sts_clock::now();
         functorBeginBarrier_.wait();
         td.runStart.push_back(sts_clock::now());
@@ -490,7 +520,8 @@ public:
      * \return whether all functors have been assigned for this task, which
      *         is always true for a BasicTask after running its single task.
      */
-    std::unique_ptr<LambdaRunner> getRunner(Range<Ratio> range, taskRunInfo &ri, TaskTimes &td) {
+    std::unique_ptr<LambdaRunner> getRunner(Range<Ratio> range,
+            SubTaskRunInfo &ri, TaskTimes &td) {
         int tid = Thread::getId();
         std::unique_ptr<LambdaRunner> lr = LRPool::gpool.get(Thread::getCore());
         lr->run([&,range,tid] {
@@ -500,6 +531,54 @@ public:
             this->run(range, ri, td);
         });
         return lr;
+    }
+    /*! \brief
+     * Searches running subtasks and attempts to steal "work" (a range of
+     * iterations) from one of them. If successful, workload for that subtask
+     * is reduced, and stolen iterations are assigned to passed subtask.
+     *
+     * Note: This function assumes the calling thread does the work and that the
+     * thread is not currently "registered" for the task. That is, this function
+     * increments the thread count, and main thread will wait for it to complete.
+     * Deadlock occurs otherwise.
+     * 
+     * \param[in] subtask  subtask needing work
+     * \return whether work was successfully stolen
+     */
+    bool stealWork(SubTask& subtask) {
+        assert(subtask.getTask() == this);
+        assert(subtask.getRunInfo().isRunning == false);
+        if (!autoBalancing_) {
+            return false;
+        }
+
+        // Find running subtask with the most remaining iterations
+        std::lock_guard<std::mutex> lockAB(autoBalancingMutex_);
+        size_t bestST = 0;
+        // Ignore subtasks with less than 2 remaining iterations
+        int64_t bestNumIters = 1;
+        for (size_t st = 0; st < subtasks_.size(); st++) {
+            SubTaskRunInfo ri = subtasks_[st]->getRunInfo();
+            if (!ri.isRunning) {
+                continue;
+            }
+            int64_t numIters = ri.endIter - ri.currentIter - 1;
+            if (numIters > bestNumIters) {
+                bestNumIters = numIters;
+                bestST = st;
+            }
+        }
+
+        if (bestNumIters == 1) {
+            return false;
+        }
+
+        SubTaskRunInfo ri = subtasks_[bestST]->getRunInfo();
+        int64_t half = ri.currentIter + (ri.endIter - ri.currentIter)/2;
+        subtasks_[bestST]->setEndIter(half);
+        subtask.setWorkingRange({half,ri.endIter});
+        addThread();
+        return true;
     }
     /*! \brief
      * Wait for all participating threads to finish
@@ -562,6 +641,10 @@ private:
     // checkPoint_ should normally only be written by the main thread (using checkpoint() method)
     // Resets to zero at beginning of each step.
     std::atomic<int> checkPoint_; //!< Allow marking of task checkpoints
+    // Whether subtasks should be balanced automatically while task is running (only makes sense for loop tasks)
+    bool autoBalancing_;
+    // Mutex for protecting subtasks' run information when auto balancing is being used.
+    std::mutex autoBalancingMutex_;
 };
 
 #endif // STS_TASK_H

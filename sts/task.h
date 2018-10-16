@@ -482,16 +482,8 @@ public:
     bool isReady() const {
         return functorBeginBarrier_.isOpen();
     }
-    // Two run functions should be identical except for type of first argument
-    void run(Range<Ratio> range, SubTaskRunInfo &ri, TaskTimes &td) {
-        td.waitStart = sts_clock::now();
-        functorBeginBarrier_.wait();
-        td.runStart.push_back(sts_clock::now());
-        functor_->run(range, ri);
-        td.runEnd.push_back(sts_clock::now());
-        functorEndBarrier_.markArrival();
-    }
-    void run(Range<int64_t> range, SubTaskRunInfo &ri, TaskTimes &td) {
+    template <typename R>
+    void run(R range, SubTaskRunInfo &ri, TaskTimes &td) {
         td.waitStart = sts_clock::now();
         functorBeginBarrier_.wait();
         td.runStart.push_back(sts_clock::now());
@@ -520,8 +512,8 @@ public:
      * \return whether all functors have been assigned for this task, which
      *         is always true for a BasicTask after running its single task.
      */
-    std::unique_ptr<LambdaRunner> getRunner(Range<Ratio> range,
-            SubTaskRunInfo &ri, TaskTimes &td) {
+    template <typename R>
+    std::unique_ptr<LambdaRunner> getRunner(R range, SubTaskRunInfo &ri, TaskTimes &td) {
         int tid = Thread::getId();
         std::unique_ptr<LambdaRunner> lr = LRPool::gpool.get(Thread::getCore());
         lr->run([&,range,tid] {

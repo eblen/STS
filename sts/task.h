@@ -44,8 +44,8 @@ public:
      * \param[in] range  range of task to be executed. Ignored for basic task.
      * \param[in] ri     structure for functor to share run information with caller.
      */
-    virtual void run(Range<int64_t> range, SubTaskRunInfo &ri) = 0;
-    virtual void run(Range<Ratio>   range, SubTaskRunInfo &ri) = 0;
+    virtual void run(Range<int64_t> range, SubTaskRunInfo &ri, bool itersCanChange) = 0;
+    virtual void run(Range<Ratio>   range, SubTaskRunInfo &ri, bool itersCanChange) = 0;
     virtual ~ITaskFunctor() {};
 };
 
@@ -66,35 +66,48 @@ public:
      * Note that run information can be concurrently altered, because iteration
      * values may be changed to support various load balancing strategies.
      *
-     * \param[in] r    range of loop
-     * \param[in] ri   run information
+     * Setting itersCanChange to false when load balancing is not being used can
+     * significantly improve performance, especially for long ranges of short
+     * iterations.
+     *
+     * \param[in] r                range of loop
+     * \param[in] ri               run information
+     * \param[in] itersCanChange   whether loop iteration values can change
      */
-    void run(Range<int64_t> r, SubTaskRunInfo &ri) {
+    void run(Range<int64_t> r, SubTaskRunInfo &ri, bool itersCanChange = true) {
         int64_t ci;
         bool finished = false;
 
-        ri.mutex.lock();
+        if (itersCanChange) {
+            ri.mutex.lock();
+        }
         ri.startIter   = r.start;
         ri.currentIter = r.start;
         ci             = r.start;
         ri.endIter     = r.end;
         ri.isRunning   = ci < ri.endIter;
         finished       = !ri.isRunning;
-        ri.mutex.unlock();
+        if (itersCanChange) {
+            ri.mutex.unlock();
+        }
 
         while (!finished) {
             body_(ci);
-            ri.mutex.lock();
+            if (itersCanChange) {
+                ri.mutex.lock();
+            }
             ri.currentIter++;
             ci = ri.currentIter;
             ri.isRunning = ci < ri.endIter;
             finished = !ri.isRunning;
-            ri.mutex.unlock();
+            if (itersCanChange) {
+                ri.mutex.unlock();
+            }
         }
     }
-    void run(Range<Ratio> r, SubTaskRunInfo &ri) {
+    void run(Range<Ratio> r, SubTaskRunInfo &ri, bool itersCanChange = true) {
         Range<int64_t> s = range_.subset(r); //compute sub-range of this execution
-        run(s, ri);
+        run(s, ri, itersCanChange);
     }
 private:
     F body_;
@@ -117,19 +130,27 @@ public:
      * \param[in] f    lambda of function
      */
     BasicTaskFunctor<F>(F f) : func_(f) {};
-    void run(Range<int64_t>, SubTaskRunInfo &ri) {
-        ri.mutex.lock();
+    void run(Range<int64_t>, SubTaskRunInfo &ri, bool itersCanChange = true) {
+        if (itersCanChange) {
+            ri.mutex.lock();
+        }
         ri.startIter   = 0;
         ri.endIter     = 1;
         ri.currentIter = 0;
-        ri.mutex.unlock();
+        if (itersCanChange) {
+            ri.mutex.unlock();
+        }
         func_();
-        ri.mutex.lock();
+        if (itersCanChange) {
+            ri.mutex.lock();
+        }
         ri.currentIter = 1;
-        ri.mutex.unlock();
+        if (itersCanChange) {
+            ri.mutex.unlock();
+        }
     }
-    void run(Range<Ratio>, SubTaskRunInfo &ri) {
-        run(Range<int64_t>({0,1}), ri);
+    void run(Range<Ratio>, SubTaskRunInfo &ri, bool itersCanChange = true) {
+        run(Range<int64_t>({0,1}), ri, itersCanChange);
     }
 private:
     F func_;
@@ -487,7 +508,7 @@ public:
         td.waitStart = sts_clock::now();
         functorBeginBarrier_.wait();
         td.runStart.push_back(sts_clock::now());
-        functor_->run(range, ri);
+        functor_->run(range, ri, autoBalancing_);
         td.runEnd.push_back(sts_clock::now());
         functorEndBarrier_.markArrival();
     }

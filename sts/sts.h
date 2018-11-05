@@ -628,47 +628,15 @@ public:
         // try and avoid pausing.
         int st = getCurrentSubTaskId();
         assert(st != -1);
-        bool haveTarget = findPauseTarget(st) > -1;
+        int pauseTarget;
+        findPauseTarget(st, pauseTarget);
         bool cpReached  = cp <= subtask->getTask()->getCheckPoint();
-        if (haveTarget || !cpReached) {
+        if (pauseTarget > -1 || !cpReached) {
             subtask->pause(cp);
             return true;
         }
         else {
             return false;
-        }
-    }
-    /*! \brief
-     * Wait for all targets to complete.
-     *
-     * This would typically be called at the end of a task to make sure that
-     * all targeted tasks were completed. This can enforce an ordering of task
-     * to avoid deadlock situations.
-     */
-    void waitForAllTargets() {
-        int tid    = Thread::getId();
-        int stid   = getCurrentSubTaskId();
-        int numSTs = getNumSubTasks(tid);
-
-        const std::bitset<MAX_SUBTASKS>& t = nextSubTasks_[tid][stid];
-        std::vector<const SubTask*> targets;
-        for (int i=0; i<numSTs; i++) {
-            if (t.test(i)) {
-                targets.push_back(threadSubTasks_[tid][i]);
-            }
-        }
-
-        SubTask* subtask = getCurrentSubTask();
-        bool allDone = false;
-        while (!allDone) {
-            allDone = true;
-            for (const SubTask* t : targets) {
-                if (!t->isDone()) {
-                    allDone = false;
-                    subtask->pause();
-                    break;
-                }
-            }
         }
     }
     /*! \brief
@@ -853,26 +821,33 @@ private:
     /*! \brief
      * Find another subtask to run on pause of the given coroutine
      *
-     * \param[in] st subtask (must be coroutine)
-     * \return    subtask to run or -1 if none found
+     * \param[in]  st            current subtask (must be coroutine)
+     * \param[out] pauseTarget   subtask to run or -1 if none found
+     * \return whether targets remain to be done (always true if target > -1)
      */
-    int findPauseTarget(int st) {
+    bool findPauseTarget(int st, int& pauseTarget) {
         int tid = Thread::getId();
         std::bitset<MAX_SUBTASKS> targets = nextSubTasks_[tid][st];
+        pauseTarget = -1;
+        bool targetsRemain = false;
         for (int stidx=st+1; stidx<MAX_SUBTASKS; stidx++) {
             if (targets.test(stidx)) {
                 targets.reset(stidx);
                 const SubTask* st = threadSubTasks_[tid][stidx];
                 bool hasReachedCP = st->getCheckPoint() <= st->getTask()->getCheckPoint();
                 if (hasReachedCP && (!st->isDone()) && st->isReady()) {
-                    return stidx;
+                    pauseTarget = stidx;
+                    return true;
+                }
+                if (!st->isDone()) {
+                    targetsRemain = true;
                 }
             }
             if (!targets.any()) {
                 break;
             }
         }
-        return -1;
+        return targetsRemain;
     }
     /*! \brief
      * Run the given subtask
@@ -898,20 +873,32 @@ private:
 
         bool isDone = false;
         bool hasReachedCP = true;
+        bool targetsRemain = true;
         do {
             isDone = st->run();
 
             // Pivot to another subtask if available (coroutines only)
-            if (!isDone) {
+            if (!isDone && targetsRemain) {
                 assert(st->getTask()->isCoroutine(tid));
-                int other_stid = findPauseTarget(stid);
-                if (other_stid > -1) {
-                    runSubTask(other_stid);
+                int pauseTarget;
+                targetsRemain = findPauseTarget(stid, pauseTarget);
+                if (pauseTarget > -1) {
+                    runSubTask(pauseTarget);
                 }
             }
 
             hasReachedCP = st->getCheckPoint() <= st->getTask()->getCheckPoint();
         } while(!isDone && hasReachedCP);
+
+        // After completing subtask, wait for all pause targets to complete.
+        if (isDone) {
+            int pt;
+            while (findPauseTarget(stid, pt)) {
+                if (pt > -1) {
+                     runSubTask(pt);
+                }
+            }
+        }
 
         if (isDone && stid > 0) {
             threadSubTasks_[tid][stid-1]->setNextRunAvailTime(

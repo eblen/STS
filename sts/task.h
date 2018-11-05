@@ -503,6 +503,15 @@ public:
     bool isReady() const {
         return functorBeginBarrier_.isOpen();
     }
+    /*! \brief
+     * Run the task
+     *
+     * \param[in]     range  For loop tasks only - range of iterations to run
+     *                       Can be either a ratio range or an integer range of
+     *                       specific iteration values
+     * \param[in|out] ri     Shared data for thread to read/change run status
+     * \param[out]    td     Space for recording run timings
+     */
     template <typename R>
     void run(R range, SubTaskRunInfo &ri, TaskTimes &td) {
         td.waitStart = sts_clock::now();
@@ -512,27 +521,8 @@ public:
         td.runEnd.push_back(sts_clock::now());
         functorEndBarrier_.markArrival();
     }
-    /*
-     * Notify task that we've added another thread that will run part of the
-     * task (supports work splitting).
-     *
-     * This function must be called whenever a new thread is added that will
-     * call "run," so that main thread knows how many threads to wait for.
-     */
-    void addThread() {
-        functorEndBarrier_.addThread();
-    }
-    // TODO: Comments out-of-date! Combine with "run" above.
-    /*! \brief
-     * Run the functor. The range argument is ignored.
-     *
-     * This function is thread-safe and intended to be called by the thread
-     * assigned to this task. Thread waits until functor is available.
-     *
-     * \param[in] range Range to run - ignored.
-     * \return whether all functors have been assigned for this task, which
-     *         is always true for a BasicTask after running its single task.
-     */
+    // Get a runner lambda for the task rather than running it directly.
+    // Arguments are identical to those for "run" function.
     template <typename R>
     std::unique_ptr<LambdaRunner> getRunner(R range, SubTaskRunInfo &ri, TaskTimes &td) {
         int tid = Thread::getId();
@@ -544,6 +534,16 @@ public:
             this->run(range, ri, td);
         });
         return lr;
+    }
+    /*
+     * Notify task that we've added another thread that will run part of the
+     * task (supports work splitting).
+     *
+     * This function must be called whenever a new thread is added that will
+     * call "run," so that main thread knows how many threads to wait for.
+     */
+    void addThread() {
+        functorEndBarrier_.addThread();
     }
     /*! \brief
      * Searches running subtasks and attempts to steal "work" (a range of
@@ -650,7 +650,6 @@ private:
     MOBarrier functorBeginBarrier_; //!< Many-to-one barrier to sync threads at beginning of loop
     OMBarrier functorEndBarrier_; //!< One-to-many barrier to sync threads at end of loop
     std::set<std::string> nextTasks_; //!< Tasks to execute after pausing (only relevant when ran as coroutine)
-
     // checkPoint_ should normally only be written by the main thread (using checkpoint() method)
     // Resets to zero at beginning of each step.
     std::atomic<int> checkPoint_; //!< Allow marking of task checkpoints

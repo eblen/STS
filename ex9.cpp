@@ -13,8 +13,6 @@ const int size = 1000;
 float A[size] = {0};
 STS *sts;
 
-// All elements of A must be assigned before B is computed, so use a barrier
-// before computing B.
 void do_something_A(int i) {
     // To see the effect of autobalancing on performance, "computation" must be
     // long enough to dwarf STS overhead. Thus, we use a sleep rather than a
@@ -40,7 +38,6 @@ void assign_threads(const int step) {
 
         int t1_numer2 = t1_numer1 + baseNumIters - (nthreads - 2*t1)*inc;
         int t2_numer1 = t2_numer2 - baseNumIters - (nthreads - 2*t1)*inc;
-        // dprintf(2, "%d %d %d %d\n", t1_numer1, t1_numer2, t2_numer1, t2_numer2);
         sts->assign_loop("TASK_F_0", t1, {{t1_numer1,size},{t1_numer2,size}});
         sts->assign_loop("TASK_F_0", t2, {{t2_numer1,size},{t2_numer2,size}});
 

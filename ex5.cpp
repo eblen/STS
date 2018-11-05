@@ -3,6 +3,8 @@
  * This example shows use of coroutines.
  */
 #include <cmath>
+#include <numeric>
+#include <vector>
 
 #include "sts/sts.h"
 #include "sts/thread.h"
@@ -46,8 +48,11 @@ int main(int argc, char **argv)
       sts->assign_loop("TASK_F_0", t, {{t-1,denom},{t,denom}});
       sts->assign_loop("TASK_G_0", t, {{t-1,denom},{t,denom}});
   }
-  sts->setCoroutine("TASK_F_0", "TASK_G_0");
-  sts->setCoroutine("TASK_G_0", "TASK_F_0");
+
+  std::vector<int> loopThreads(nthreads-2);
+  std::iota(loopThreads.begin(), loopThreads.end(), 2);
+  sts->setCoroutine("TASK_F_0", loopThreads, "TASK_G_0");
+  // sts->setCoroutine("TASK_G_0", loopThreads, "TASK_F_0");
 
   for (int step=0; step<nsteps; step++) {
       sts->nextStep();

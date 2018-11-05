@@ -195,6 +195,7 @@ public:
      * Mark task as a coroutine (runs inside a lambda runner and can be paused)
      *
      * \param[in] label      task name
+     * \param[in] threadIds  threads that should run task as a coroutine
      * \param[in] nextTasks  set of possible tasks to run on pause
      */ 
     void setCoroutine(std::string label, const std::vector<int> &threadIds,
@@ -571,6 +572,7 @@ public:
      */
     bool pause(int cp=0) {
         // Split work if other threads are idle
+        // TODO: Consider deprecating work splitting. Auto-balancing seems to work better.
         if (numIdleThreads_ > 0) {
             idleStateMutex_.lock();
             SubTask* st = getCurrentSubTask();

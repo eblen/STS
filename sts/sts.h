@@ -26,7 +26,7 @@
 #include "thread.h"
 
 static const int MAX_SUBTASKS = 32;
-static const int MAX_THREADS  =  8;
+static const int MAX_THREADS  = 32;
 
 /*! \internal \brief
  * Static Thread Scheduler
@@ -895,7 +895,7 @@ private:
             int pt;
             while (findPauseTarget(stid, pt)) {
                 if (pt > -1) {
-                     runSubTask(pt);
+                    runSubTask(pt);
                 }
             }
         }
@@ -970,6 +970,7 @@ private:
                     continue;
                 }
                 const auto &ntlabels = st->getTask()->getNextTasks();
+                nextSubTasks_[tid][stid].reset();
                 // Only later tasks are allowed to be targets
                 for (int stid2=stid+1; stid2<nSubTasks; stid2++) {
                     const SubTask* st2 = threadSubTasks_[tid][stid2];

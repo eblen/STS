@@ -574,7 +574,6 @@ public:
         // Split work if other threads are idle
         // TODO: Consider deprecating work splitting. Auto-balancing seems to work better.
         if (numIdleThreads_ > 0) {
-            idleStateMutex_.lock();
             SubTask* st = getCurrentSubTask();
             // subtask is null for "extra work" assigned to an idle thread
             // outside of a normal subtask.
@@ -583,6 +582,7 @@ public:
             }
             // Note search for idle thread could fail because threads may enter
             // mutex before numIdleThreads_ is decremented.
+            idleStateMutex_.lock();
             for (int t=0; t<getNumThreads(); t++) {
                 if (isThreadIdle_[t]) {
                     // Create work for thread

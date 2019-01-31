@@ -227,7 +227,7 @@ public:
     int getCheckPoint() const {
         return checkPoint_;
     }
-    Task *getTask() const;
+    const Task *getTask() const;
     bool isDone() const;
     void setDone(bool isDone);
     /*! \brief

@@ -62,7 +62,7 @@ bool SubTask::run() {
     }
 }
 
-Task* SubTask::getTask() const {
+const Task* SubTask::getTask() const {
     return task_;
 }
 bool SubTask::isDone() const {

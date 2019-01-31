@@ -30,19 +30,6 @@ void wait_until(const std::atomic<T> &a, std::nullptr_t) {
     while (a.load() != nullptr);
 }
 /*! \brief
- * Wait for either of two variables to be set to a value
- *
- * \param[in] a1   first atomic variable
- * \param[in] v1   first value
- * \param[in] a2   second atomic variable
- * \param[in] v2   second value
- */
-template <typename T, typename U>
-void wait_until_or(const std::atomic<T> &a1, T v1,
-                   const std::atomic<U> &a2, U v2) {
-    while (a1.load() != v1 && a2.load() != v2);
-}
-/*! \brief
  * Wait until atomic variable a is not set to value v
  *
  * \param[in] a   atomic variable

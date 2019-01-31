@@ -102,19 +102,17 @@ public:
      * \param[in] name  optional name for schedule
      */
     STS(std::string name = "") :id(name), bUseDefaultSchedule_(false),
-        isActive_(false), numIdleThreads_(0), splitRatio(0.05) {
+        isActive_(false) {
         int n = getNumThreads();
         assert(n > 0);
         threadSubTasks_.resize(n);
         threadCallStacks_.resize(n);
         for (int i=0; i<n; i++) {
             systemProgressed_[i] = 0;
-            isThreadIdle_[i] = false;
         }
         if (!id.empty()) {
             stsInstances_[id] = this;
         }
-        extraWork_.resize(n);
     }
     ~STS() {
         // Tasks own their subtasks, so do not delete SubTasks in threadSubTasks_
@@ -518,7 +516,6 @@ public:
     void runAllSubTasks() {
         int tid = Thread::getId();
         assert(threadCallStacks_[tid].empty());
-        int nthreads = getNumThreads();
 
         for (int stid = 0; stid < getNumSubTasks(tid); stid++) {
             // Must check because subtasks can be called and completed by
@@ -526,26 +523,6 @@ public:
             if (!threadSubTasks_[tid][stid]->isDone()) {
                 runSubTask(stid);
             }
-        }
-
-        while (true) {
-            // Register as an idle thread
-            idleStateMutex_.lock();
-            numIdleThreads_++;
-            isThreadIdle_[tid] = true;
-            idleStateMutex_.unlock();
-
-            // Wait until either all threads are done or extra work is assigned.
-            wait_until_or(isThreadIdle_[tid], false, numIdleThreads_, nthreads);
-            if (numIdleThreads_ == nthreads) {
-                return;
-            }
-
-            // Do extra work
-            idleStateMutex_.lock();
-            TaskPortion &tp = extraWork_[tid].back();
-            idleStateMutex_.unlock();
-            tp.t->run(tp.r, tp.ri, tp.tt);
         }
     }
     /*! \brief
@@ -563,50 +540,12 @@ public:
     }
     /*! \brief
      * Pause the current subtask. Does nothing if task is not a coroutine
-     * (including "extra work" assigned to idle threads, when current subtask
-     * is null).
      * Input parameter can be safely ignored if not using checkpoints.
      *
      * \param[in] cp  checkpoint when it is okay to resume task
      * \return        whether subtask actually paused
      */
     bool pause(int cp=0) {
-        // Split work if other threads are idle
-        // TODO: Consider deprecating work splitting. Auto-balancing seems to work better.
-        if (numIdleThreads_ > 0) {
-            SubTask* st = getCurrentSubTask();
-            // subtask is null for "extra work" assigned to an idle thread
-            // outside of a normal subtask.
-            if (st == nullptr) {
-                return false;
-            }
-            // Note search for idle thread could fail because threads may enter
-            // mutex before numIdleThreads_ is decremented.
-            idleStateMutex_.lock();
-            for (int t=0; t<getNumThreads(); t++) {
-                if (isThreadIdle_[t]) {
-                    // Create work for thread
-                    int64_t ci = st->getRunInfo().currentIter;
-                    int64_t ei = st->getRunInfo().endIter;
-                    if (ei-ci < 2) {
-                        continue;
-                    }
-                    int64_t half = ci + (ei-ci)*(1.0 - splitRatio);
-                    extraWork_[t].push_back(TaskPortion(st->getTask(), {half, ei}));
-
-                    // Modify current subtask and task
-                    st->setEndIter(half);
-                    st->getTask()->addThread();
-
-                    // Wakeup idle thread
-                    numIdleThreads_--;
-                    isThreadIdle_[t] = false;
-                    break;
-                }
-            }
-            idleStateMutex_.unlock();
-        }
-
         // Support fast polling - return immediately if nothing has changed
         // (no new tasks available or checkpoints reached)
         // Only works if cp=0. For polling, no argument should be passed.
@@ -618,9 +557,9 @@ public:
         systemProgressed_[tid] = std::max(0,systemProgressed_[tid].load()-1);
 
         SubTask* subtask = getCurrentSubTask();
-        // Abort for non-coroutines, including "extra work" assigned to idle
-        // threads (subtask == nullptr).
-        if (subtask == nullptr || !subtask->getTask()->isCoroutine(tid)) {
+        assert(subtask != nullptr);
+        // Abort for non-coroutines
+        if (!subtask->getTask()->isCoroutine(tid)) {
             return false;
         }
 
@@ -690,14 +629,6 @@ public:
                }
                std::cout << std::endl;
            }
-
-           for (const TaskPortion& p : extraWork_[t]) {
-               auto ms_start = time_point_cast<microseconds>(p.tt.runStart[0]);
-               auto ms_end   = time_point_cast<microseconds>(p.tt.runEnd[0]);
-               std::cout << p.t->getLabel();
-               std::cout << " " << ms_start.time_since_epoch().count();
-               std::cout << " " << ms_end.time_since_epoch().count() << std::endl;
-           }
        } 
     }
     const SubTask* getSubTask(int threadId, int subTaskId) const {
@@ -723,10 +654,6 @@ public:
         else {
             return st->getTask();
         }
-    }
-    void setSplitRatio(double sr) {
-        assert(sr >= 0.0 && sr <= 1.0);
-        splitRatio = sr;
     }
 private:
     int getCurrentSubTaskId() const {
@@ -998,10 +925,7 @@ private:
             // Counts may be > 0 after previous step, effectively disabling the
             // fast polling mechanism.
             systemProgressed_[i] = 0;
-            isThreadIdle_[i] = false;
-            extraWork_[i].clear();
         }
-        numIdleThreads_ = 0;
     }
     //! Wait on all tasks to finish
     void waitInternal() {
@@ -1039,23 +963,6 @@ private:
     // Use map because other containers require copy and assignment for atomics
     std::map<int, std::atomic<int> > systemProgressed_;
 
-    // Variables for recording thread idle state
-    std::mutex idleStateMutex_;
-    std::atomic<int> numIdleThreads_;
-    // Use map because other containers require copy and assignment for atomics
-    std::map<int, std::atomic<bool>> isThreadIdle_;
-
-    // A slot per thread to put extra work when thread becomes idle
-    struct TaskPortion {
-        Task* t;
-        Range<int64_t> r;
-        SubTaskRunInfo ri;
-        TaskTimes tt;
-        TaskPortion(Task* t_, Range<int64_t> r_): t(t_), r(r_), ri(t_) {}
-    };
-    std::vector<std::vector<TaskPortion>> extraWork_;
-    // Amount of remaining work to reassign when work splitting. Default is 0.05
-    double splitRatio;
     // Cannot be a vector because Task moving is not allowed (occurs on resizing)
     static std::deque<Thread> threads_;
     static std::atomic<int> stepCounter_;

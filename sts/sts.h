@@ -30,6 +30,11 @@ static const int MAX_THREADS  = 32;
 
 /*! \internal \brief
  * Static Thread Scheduler
+ *
+ * This is the main class for STS, which represents a single thread schedule.
+ * Most applications will have one instance for each compute kernel and all
+ * thread scheduling and running of tasks for that kernel will be done through
+ * that instance.
  */
 class STS {
 public:

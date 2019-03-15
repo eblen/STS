@@ -23,6 +23,7 @@ class Task;
 
 /*! \brief
  * Class to store the state of a running subtask.
+ *
  * Specifically, store the start, end, and current iteration values of a loop
  * task, which can change concurrently if load balancing is being done.
  */

@@ -4,7 +4,14 @@
 #include <cassert>
 #include <string>
 
-// TODO: Support negative ratios in all operations
+/*! \internal \brief
+ * Ratio class
+ *
+ * This is a simple class to support creating ratios and doing basic
+ * arithmetic on them.
+ *
+ * TODO: Support negative ratios in all operations
+ */
 class Ratio {
 public:
     Ratio()               : nom_(0), denom_(1) {}
@@ -34,6 +41,13 @@ private:
     friend Ratio operator-(Ratio, Ratio);
 };
 
+/*! \internal \brief
+ * Range class
+ *
+ * This is a simple class to support a range of values with a start and
+ * end point. It is templated to work on both ints and Ratios, although
+ * other data types should also work.
+ */
 template<class T>
 class Range {
 public:

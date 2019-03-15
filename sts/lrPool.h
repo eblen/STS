@@ -7,6 +7,19 @@
 #include <vector>
 #include "lambdaRunner.h"
 
+/*! \internal \brief
+ * LRPool
+ *
+ * This class serves as an interface between LambdaRunner (LR) and users of LR,
+ * handling requests for LRs, using the "get" and "release" methods. It
+ * improves performance by allowing LRs to be reused, because LR creation is
+ * expensive. LRs are pinned to a certain compute core and so must be requested
+ * for a certain core.
+ *
+ * If the application knows that cores are never shared (requests for LRs to
+ * the same core never occur at the same time), it can set "shared cores" to
+ * false to avoid locking and improve performance.
+ */
 class LRPool {
 public:
     LRPool() :haveSharedCores_(true) {};
@@ -29,6 +42,7 @@ public:
     bool getSharedCores() const {return haveSharedCores_;}
     void setSharedCores(bool ssc) {haveSharedCores_ = ssc;}
 
+    // Checkout a new LR
     std::unique_ptr<LambdaRunner> get(int core) {
         if (haveSharedCores_) {
             return getSafe(core);
@@ -38,6 +52,7 @@ public:
         }
     }
 
+    // Release the given LR
     void release(std::unique_ptr<LambdaRunner> &lr) {
         if (haveSharedCores_) {
             releaseSafe(lr);

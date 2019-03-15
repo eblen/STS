@@ -17,6 +17,13 @@
 
 void setAffinity(int core);
 
+/*! \internal \brief
+ * LambdaRunner
+ *
+ * This class represents a "runner" (a thread of execution) that can run C++
+ * lambdas. Most importantly, it can be exited and re-entered, functioning like
+ * a coroutine, using the "pause" and "cont" function calls, respectively.
+ */
 class LambdaRunner {
 public:
     LambdaRunner(int core=-1) : core_(core), finished_(true), doHalt_(false), isRunning_(true) {
